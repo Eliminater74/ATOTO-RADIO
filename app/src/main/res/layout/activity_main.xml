@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212"
+    android:padding="16dp">
+
+    <!-- Header / Frequency -->
+    <TextView
+        android:id="@+id/tv_frequency"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="101.5 FM"
+        android:textColor="#FFFFFF"
+        android:textSize="56sp"
+        android:textStyle="bold"
+        android:fontFamily="sans-serif-light"
+        app:layout_constraintVertical_bias="0.2"
+        app:layout_constraintBottom_toTopOf="@+id/tv_status"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Status Indicator -->
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Ready"
+        android:textColor="#00E5FF"
+        android:textSize="18sp"
+        app:layout_constraintBottom_toTopOf="@+id/btn_seek_up"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        android:layout_marginBottom="32dp"/>
+
+    <!-- Seek Controls Row -->
+    <Button
+        android:id="@+id/btn_seek_down"
+        android:layout_width="0dp"
+        android:layout_height="60dp"
+        android:text="Seek -"
+        android:backgroundTint="#333333"
+        android:textColor="#FFFFFF"
+        app:cornerRadius="12dp"
+        app:layout_constraintWidth_percent="0.3"
+        app:layout_constraintBottom_toTopOf="@+id/btn_prev"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/btn_seek_up"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/btn_seek_up"
+        android:layout_width="0dp"
+        android:layout_height="60dp"
+        android:text="Seek +"
+        android:backgroundTint="#333333"
+        android:textColor="#FFFFFF"
+        app:cornerRadius="12dp"
+        app:layout_constraintWidth_percent="0.3"
+        app:layout_constraintBottom_toTopOf="@+id/btn_next"
+        app:layout_constraintStart_toEndOf="@+id/btn_seek_down"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Preset Controls Row -->
+    <Button
+        android:id="@+id/btn_prev"
+        android:layout_width="0dp"
+        android:layout_height="60dp"
+        android:text="|&lt; PREV"
+        android:backgroundTint="#00E5FF"
+        android:textColor="#000000"
+        app:cornerRadius="12dp"
+        app:layout_constraintWidth_percent="0.4"
+        app:layout_constraintBottom_toTopOf="@+id/tv_log_label"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@+id/btn_next"
+        android:layout_marginBottom="32dp" />
+
+    <Button
+        android:id="@+id/btn_next"
+        android:layout_width="0dp"
+        android:layout_height="60dp"
+        android:text="NEXT &gt;|"
+        android:backgroundTint="#00E5FF"
+        android:textColor="#000000"
+        app:cornerRadius="12dp"
+        app:layout_constraintWidth_percent="0.4"
+        app:layout_constraintBottom_toTopOf="@+id/tv_log_label"
+        app:layout_constraintStart_toEndOf="@+id/btn_prev"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="32dp" />
+
+    <!-- Debug Log Area -->
+    <TextView
+        android:id="@+id/tv_log_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="DEBUG LOG (Sniffer):"
+        android:textColor="#666666"
+        android:textSize="12sp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintBottom_toTopOf="@+id/tv_log" />
+
+    <TextView
+        android:id="@+id/tv_log"
+        android:layout_width="match_parent"
+        android:layout_height="100dp"
+        android:background="#0A0A0A"
+        android:textColor="#00FF00"
+        android:padding="8dp"
+        android:textSize="10sp"
+        android:fontFamily="monospace"
+        android:gravity="bottom"
+        android:text="..."
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
