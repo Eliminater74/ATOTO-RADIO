@@ -24,8 +24,11 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         radioManager = RadioManager(this)
+        // Try to wake up hardware on launch
+        radioManager.startRadio()
 
         statusText = findViewById(R.id.tv_status)
+        val frequencyText = findViewById<TextView>(R.id.tv_frequency)
         logText = findViewById(R.id.tv_log)
         logText.movementMethod = ScrollingMovementMethod()
 
@@ -34,22 +37,32 @@ class MainActivity : AppCompatActivity() {
         val btnSeekUp = findViewById<Button>(R.id.btn_seek_up)
         val btnSeekDown = findViewById<Button>(R.id.btn_seek_down)
 
+        var currentFreq = 101.5
+
         btnNext.setOnClickListener {
+            currentFreq += 0.2
+            frequencyText.text = "%.1f".format(currentFreq)
             updateStatus("Action: NEXT Presets")
             radioManager.nextStation()
         }
 
         btnPrev.setOnClickListener {
+            currentFreq -= 0.2
+            frequencyText.text = "%.1f".format(currentFreq)
             updateStatus("Action: PREV Presets")
             radioManager.prevStation()
         }
         
         btnSeekUp.setOnClickListener {
+            currentFreq += 0.1
+            frequencyText.text = "%.1f".format(currentFreq)
             updateStatus("Action: SEEK UP")
             radioManager.seekUp()
         }
         
         btnSeekDown.setOnClickListener {
+            currentFreq -= 0.1
+            frequencyText.text = "%.1f".format(currentFreq)
             updateStatus("Action: SEEK DOWN")
             radioManager.seekDown()
         }
