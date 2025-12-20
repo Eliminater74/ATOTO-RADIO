@@ -4,118 +4,145 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121212"
-    android:padding="16dp">
+    android:background="@drawable/bg_main"
+    android:padding="24dp">
 
     <!-- Header / Frequency -->
     <TextView
         android:id="@+id/tv_frequency"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="101.5 FM"
-        android:textColor="#FFFFFF"
-        android:textSize="56sp"
+        android:text="101.5"
+        android:textColor="@color/white"
+        android:textSize="96sp"
         android:textStyle="bold"
-        android:fontFamily="sans-serif-light"
-        app:layout_constraintVertical_bias="0.2"
-        app:layout_constraintBottom_toTopOf="@+id/tv_status"
+        android:fontFamily="sans-serif-thin"
+        android:shadowColor="#80000000"
+        android:shadowDx="0"
+        android:shadowDy="10"
+        android:shadowRadius="20"
+        app:layout_constraintVertical_bias="0.15"
+        app:layout_constraintBottom_toTopOf="@+id/tv_mhz"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/tv_mhz"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="MHz"
+        android:textColor="@color/neon_blue"
+        android:textSize="24sp"
+        android:letterSpacing="0.2"
+        android:fontFamily="sans-serif-medium"
+        app:layout_constraintTop_toBottomOf="@+id/tv_frequency"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent" />
 
     <!-- Status Indicator -->
     <TextView
         android:id="@+id/tv_status"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Ready"
-        android:textColor="#00E5FF"
-        android:textSize="18sp"
+        android:text="READY"
+        android:textColor="@color/glass_text"
+        android:textSize="14sp"
+        android:letterSpacing="0.1"
         app:layout_constraintBottom_toTopOf="@+id/btn_seek_up"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
-        android:layout_marginBottom="32dp"/>
+        android:layout_marginBottom="48dp"/>
 
     <!-- Seek Controls Row -->
-    <Button
+    <androidx.appcompat.widget.AppCompatButton
         android:id="@+id/btn_seek_down"
         android:layout_width="0dp"
-        android:layout_height="60dp"
-        android:text="Seek -"
-        android:backgroundTint="#333333"
-        android:textColor="#FFFFFF"
-        app:cornerRadius="12dp"
-        app:layout_constraintWidth_percent="0.3"
+        android:layout_height="72dp"
+        android:text="-"
+        android:textSize="32sp"
+        android:background="@drawable/btn_glass"
+        android:textColor="@color/white"
+        app:layout_constraintWidth_percent="0.25"
         app:layout_constraintBottom_toTopOf="@+id/btn_prev"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/btn_seek_up"
-        android:layout_marginBottom="16dp" />
+        android:layout_marginBottom="24dp" />
 
-    <Button
+    <androidx.appcompat.widget.AppCompatButton
         android:id="@+id/btn_seek_up"
         android:layout_width="0dp"
-        android:layout_height="60dp"
-        android:text="Seek +"
-        android:backgroundTint="#333333"
-        android:textColor="#FFFFFF"
-        app:cornerRadius="12dp"
-        app:layout_constraintWidth_percent="0.3"
+        android:layout_height="72dp"
+        android:text="+"
+        android:textSize="32sp"
+        android:background="@drawable/btn_glass"
+        android:textColor="@color/white"
+        app:layout_constraintWidth_percent="0.25"
         app:layout_constraintBottom_toTopOf="@+id/btn_next"
         app:layout_constraintStart_toEndOf="@+id/btn_seek_down"
         app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginBottom="16dp" />
+        android:layout_marginBottom="24dp" />
 
     <!-- Preset Controls Row -->
-    <Button
+    <androidx.appcompat.widget.AppCompatButton
         android:id="@+id/btn_prev"
         android:layout_width="0dp"
-        android:layout_height="60dp"
-        android:text="|&lt; PREV"
-        android:backgroundTint="#00E5FF"
-        android:textColor="#000000"
-        app:cornerRadius="12dp"
-        app:layout_constraintWidth_percent="0.4"
-        app:layout_constraintBottom_toTopOf="@+id/tv_log_label"
+        android:layout_height="72dp"
+        android:text="PREVIOUS"
+        android:background="@drawable/btn_glass"
+        android:textColor="@color/neon_blue"
+        android:textSize="14sp"
+        android:letterSpacing="0.1"
+        android:fontFamily="sans-serif-medium"
+        app:layout_constraintWidth_percent="0.45"
+        app:layout_constraintBottom_toTopOf="@+id/tv_log_container"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/btn_next"
         android:layout_marginBottom="32dp" />
 
-    <Button
+    <androidx.appcompat.widget.AppCompatButton
         android:id="@+id/btn_next"
         android:layout_width="0dp"
-        android:layout_height="60dp"
-        android:text="NEXT &gt;|"
-        android:backgroundTint="#00E5FF"
-        android:textColor="#000000"
-        app:cornerRadius="12dp"
-        app:layout_constraintWidth_percent="0.4"
-        app:layout_constraintBottom_toTopOf="@+id/tv_log_label"
+        android:layout_height="72dp"
+        android:text="NEXT"
+        android:background="@drawable/btn_glass"
+        android:textColor="@color/neon_blue"
+        android:textSize="14sp"
+        android:letterSpacing="0.1"
+        android:fontFamily="sans-serif-medium"
+        app:layout_constraintWidth_percent="0.45"
+        app:layout_constraintBottom_toTopOf="@+id/tv_log_container"
         app:layout_constraintStart_toEndOf="@+id/btn_prev"
         app:layout_constraintEnd_toEndOf="parent"
         android:layout_marginBottom="32dp" />
 
-    <!-- Debug Log Area -->
-    <TextView
-        android:id="@+id/tv_log_label"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="DEBUG LOG (Sniffer):"
-        android:textColor="#666666"
-        android:textSize="12sp"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintBottom_toTopOf="@+id/tv_log" />
-
-    <TextView
-        android:id="@+id/tv_log"
+    <!-- Debug Log Container -->
+    <LinearLayout
+        android:id="@+id/tv_log_container"
         android:layout_width="match_parent"
         android:layout_height="100dp"
-        android:background="#0A0A0A"
-        android:textColor="#00FF00"
+        android:orientation="vertical"
+        android:background="#80000000"
         android:padding="8dp"
-        android:textSize="10sp"
-        android:fontFamily="monospace"
-        android:gravity="bottom"
-        android:text="..."
-        app:layout_constraintBottom_toBottomOf="parent" />
+        app:layout_constraintBottom_toBottomOf="parent">
+        
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="DEBUG SNIFFER"
+            android:textColor="#666666"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_log"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:textColor="#00FF00"
+            android:textSize="10sp"
+            android:fontFamily="monospace"
+            android:gravity="bottom"
+            android:text="..." />
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
