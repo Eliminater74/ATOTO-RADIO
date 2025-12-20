@@ -56,7 +56,22 @@ class RadioManager(private val context: Context) {
                 android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to send Media Key", e)
+            Log.e(TAG, "Failed to send Media Key via AudioManager", e)
+        }
+        
+        // Fallback: Broadcast the media button intent (Standard Headset Hook emulation)
+        try {
+            val intent = Intent(Intent.ACTION_MEDIA_BUTTON)
+            val event = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
+            intent.putExtra(Intent.EXTRA_KEY_EVENT, event)
+            context.sendOrderedBroadcast(intent, null)
+            
+            val intentUp = Intent(Intent.ACTION_MEDIA_BUTTON)
+            val eventUp = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
+            intentUp.putExtra(Intent.EXTRA_KEY_EVENT, eventUp)
+            context.sendOrderedBroadcast(intentUp, null)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to broadcast Media Button Intent", e)
         }
     }
 
