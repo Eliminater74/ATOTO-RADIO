@@ -30,8 +30,8 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { appendLog(msg) }
         }
         
-        // Try to wake up hardware on launch
-        radioManager.startRadio()
+        // Initialize Views FIRST
+
 
         statusText = findViewById(R.id.tv_status)
         val frequencyText = findViewById<TextView>(R.id.tv_frequency)
@@ -69,9 +69,29 @@ class MainActivity : AppCompatActivity() {
             updateStatus("Action: Seek Down")
             radioManager.seekDown() // Uses C_SEEK_DOWN (6)
         }
+        
+        // --- Debug Controls Wiring (Restored) ---
+        findViewById<Button>(R.id.btn_debug_src1).setOnClickListener { 
+            radioManager.setSource(1) 
+        }
+        findViewById<Button>(R.id.btn_debug_src11).setOnClickListener { 
+            radioManager.setSource(11) 
+        }
+        findViewById<Button>(R.id.btn_debug_hide).setOnClickListener { 
+            radioManager.sendFytIntent("android.fyt.action.HIDE") 
+        }
+        findViewById<Button>(R.id.btn_debug_show).setOnClickListener { 
+            radioManager.sendFytIntent("android.fyt.action.SHOW") 
+        }
+        findViewById<Button>(R.id.btn_debug_995).setOnClickListener { 
+            radioManager.tuneTo(10470) // Direct Tune to 104.7 MHz (Q105)
+        }
 
         // Start Sniffer for debugging
         registerSniffer()
+        
+        // Try to wake up hardware on launch (Moved after View Init to prevent Crash)
+        radioManager.startRadio()
     }
 
     override fun onDestroy() {

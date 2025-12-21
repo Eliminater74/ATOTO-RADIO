@@ -17,7 +17,7 @@ class RadioManager(private val context: Context) {
         const val TAG = "RadioManager"
         const val MODULE_RADIO = 1 
         const val MODULE_MAIN  = 0
-        const val APP_ID_RADIO = 11
+        const val APP_ID_RADIO = 1 // Corrected to 1 for Sound
         
         // --- C_* Command Codes (Actionable) ---
         const val C_FREQ_UP      = 3  // Tune Up (Step)
@@ -49,7 +49,7 @@ class RadioManager(private val context: Context) {
                 try {
                     val payload = intArrayOf(APP_ID_RADIO)
                     remoteMain?.cmd(0, payload, null, null)
-                    val msg = "Requested App ID 11 (Switch) - Try ${retryCount + 1}"
+                    val msg = "Requested App ID 1 (Switch) - Try ${retryCount + 1}"
                     Log.d(TAG, msg)
                     logCallback?.invoke(msg)
                     retryCount++
@@ -95,6 +95,30 @@ class RadioManager(private val context: Context) {
         }
     }
 
+    fun setSource(appId: Int) {
+        if (remoteMain != null) {
+             try {
+                 remoteMain?.cmd(0, intArrayOf(appId), null, null)
+                 val msg = "Manual Source Switch: ID $appId"
+                 Log.d(TAG, msg)
+                 logCallback?.invoke(msg)
+             } catch(e: Exception) {
+                 logCallback?.invoke("Source Switch Err: ${e.message}")
+             }
+        } else {
+             logCallback?.invoke("Main Module Not Connected")
+        }
+    }
+    
+    fun sendFytIntent(action: String) {
+        logCallback?.invoke("Sending Intent: $action")
+        try {
+            val intent = Intent(action)
+            intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+            context.sendBroadcast(intent)
+        } catch (e: Exception) {}
+    }
+
     fun startRadio() {
         Log.d(TAG, "Binding to com.syu.ms.toolkit ...")
         logCallback?.invoke("Binding to Service...")
@@ -105,8 +129,8 @@ class RadioManager(private val context: Context) {
             context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
             
             // FYT specific intents to wake up the system/UI
-            context.sendBroadcast(Intent("com.syu.radio.Launch"))
-            context.startService(Intent("android.fyt.action.SHOW"))
+            // context.sendBroadcast(Intent("com.syu.radio.Launch")) // Removed to prevent conflict
+            context.startService(Intent("android.fyt.action.HIDE"))
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to bind", e)
@@ -133,11 +157,21 @@ class RadioManager(private val context: Context) {
     }
 
     fun tuneUp() {
-        sendCmd(C_FREQ_UP)
+        // Universal: Code 1 (U_FREQ), Step 0, +1
+        sendCmd(1, 0, 1)
+        logCallback?.invoke("Sent Tune UP (Step +1)")
     }
 
     fun tuneDown() {
-        sendCmd(C_FREQ_DOWN)
+        // Universal: Code 1 (U_FREQ), Step 0, -1
+        sendCmd(1, 0, -1)
+        logCallback?.invoke("Sent Tune DOWN (Step -1)")
+    }
+    
+    fun tuneTo(freqInt: Int) {
+        // Universal: Code 1 (U_FREQ), Direct 1, Value
+        sendCmd(1, 1, freqInt)
+        logCallback?.invoke("Sent Direct Tune to $freqInt")
     }
 
     fun seekUp() {
