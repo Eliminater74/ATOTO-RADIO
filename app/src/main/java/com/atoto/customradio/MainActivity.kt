@@ -25,16 +25,27 @@ class MainActivity : AppCompatActivity() {
 
         radioManager = RadioManager(this)
         
-        // --- Connect Debug Console ---
+        // --- Connect MCU Callbacks to UI ---
         radioManager.logCallback = { msg ->
             runOnUiThread { appendLog(msg) }
+        }
+        
+        val frequencyText = findViewById<TextView>(R.id.tv_frequency)
+        
+        radioManager.onFreqChange = { freq ->
+            // freq is in 10kHz units for FM (e.g. 10170 = 101.7 MHz)
+            val displayFreq = freq / 100.0
+            frequencyText.text = "%.1f MHz".format(displayFreq)
+        }
+        
+        radioManager.onBandChange = { band ->
+            updateStatus("Current Band: $band")
         }
         
         // Initialize Views FIRST
 
 
         statusText = findViewById(R.id.tv_status)
-        val frequencyText = findViewById<TextView>(R.id.tv_frequency)
         logText = findViewById(R.id.tv_log)
         logText.movementMethod = ScrollingMovementMethod()
 
@@ -57,17 +68,13 @@ class MainActivity : AppCompatActivity() {
         }
         
         btnSeekUp.setOnClickListener {
-            currentFreq += 0.1 // Visual only, real update comes from callback later
-            frequencyText.text = "%.1f".format(currentFreq)
             updateStatus("Action: Seek Up")
-            radioManager.seekUp() // Uses C_SEEK_UP (5)
+            radioManager.seekUp() 
         }
         
         btnSeekDown.setOnClickListener {
-            currentFreq -= 0.1
-            frequencyText.text = "%.1f".format(currentFreq)
             updateStatus("Action: Seek Down")
-            radioManager.seekDown() // Uses C_SEEK_DOWN (6)
+            radioManager.seekDown() 
         }
         
         // --- Debug Controls Wiring (Restored) ---
@@ -96,6 +103,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        radioManager.stopRadio()
         unregisterReceiver(snifferReceiver)
     }
 

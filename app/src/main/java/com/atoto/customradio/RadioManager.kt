@@ -4,14 +4,21 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import com.syu.ipc.IModuleCallback
 import com.syu.ipc.IRemoteModule
 import com.syu.ipc.IRemoteToolkit
 
 class RadioManager(private val context: Context) {
 
     var logCallback: ((String) -> Unit)? = null
+    var onFreqChange: ((Int) -> Unit)? = null
+    var onBandChange: ((Int) -> Unit)? = null
 
     companion object {
         const val TAG = "RadioManager"
@@ -19,10 +26,17 @@ class RadioManager(private val context: Context) {
         const val MODULE_MAIN  = 0
         const val APP_ID_RADIO = 1 // Corrected to 1 for Sound
         
+        // --- G_* Get/Notify Codes (From MCU) ---
+        const val G_FREQ = 1          // Current frequency update
+        const val G_BAND = 2          // Current band update
+        const val G_AREA = 3          // Current area update
+        const val G_SEARCH_STATE = 22 // Current search/seek state
+
         // --- U_* Update Codes (Direct MCU Commands) ---
         const val U_FREQ = 1          // Set frequency / tune
         const val U_AREA = 2          // Set region
         const val U_BAND = 0          // Set band
+        const val U_SCAN = 20         // Start/Stop Scan
         const val U_SEARCH_STATE = 22 // Set search state (seek/scan)
         
         // --- Frequency Modes ---
@@ -45,6 +59,37 @@ class RadioManager(private val context: Context) {
     private var remoteToolkit: IRemoteToolkit? = null
     private var remoteModule: IRemoteModule? = null
     private var remoteMain: IRemoteModule? = null
+
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var audioFocusRequest: AudioFocusRequest? = null
+
+    // --- MCU Callback Implementation ---
+    private val moduleCallback = object : IModuleCallback.Stub() {
+        override fun update(updateCode: Int, ints: IntArray?, floats: FloatArray?, strs: Array<String>?) {
+            val intsStr = ints?.joinToString() ?: "null"
+            Log.d(TAG, "MCU Callback: Code=$updateCode, ints=[$intsStr]")
+            
+            handler.post {
+                when (updateCode) {
+                    G_FREQ -> {
+                        val freq = ints?.getOrNull(0) ?: return@post
+                        onFreqChange?.invoke(freq)
+                        logCallback?.invoke("MCU Frequency: $freq")
+                    }
+                    G_BAND -> {
+                        val band = ints?.getOrNull(0) ?: return@post
+                        onBandChange?.invoke(band)
+                        logCallback?.invoke("MCU Band: $band")
+                    }
+                }
+            }
+        }
+    }
+
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        Log.d(TAG, "Audio Focus Change: $focusChange")
+        logCallback?.invoke("Audio Focus: $focusChange")
+    }
 
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var retryCount = 0
@@ -80,6 +125,15 @@ class RadioManager(private val context: Context) {
                 
                 logCallback?.invoke("Modules Acquired: Radio=$remoteModule, Main=$remoteMain")
                 
+                // Register Callbacks (0-100 as per OEM source)
+                for (i in 0..100) {
+                    remoteModule?.register(moduleCallback, i, 1)
+                }
+                logCallback?.invoke("Callbacks Registered (0-100)")
+
+                // Request Audio Focus
+                requestRadioFocus()
+
                 // Initialize radio settings after connection
                 initializeRadio()
                 
@@ -104,13 +158,40 @@ class RadioManager(private val context: Context) {
     }
 
     private fun initializeRadio() {
-        // Set region to USA (adjust if needed for your area)
-        sendCmd(U_AREA, AREA_USA)
-        logCallback?.invoke("Set Region to USA")
+        // Essential wake-up sequence
+        logCallback?.invoke("Initializing Radio module...")
         
-        // Set to FM band (example; add logic for AM/FM switching)
+        // 1. Force Source to Radio
+        setSource(APP_ID_RADIO)
+
+        // 2. Set region 
+        sendCmd(U_AREA, AREA_USA)
+        
+        // 3. Set band
         sendCmd(U_BAND, BAND_FM1)
-        logCallback?.invoke("Set Band to FM1")
+    }
+
+    private fun requestRadioFocus() {
+        logCallback?.invoke("Requesting Audio Focus...")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build())
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                .build()
+            
+            audioManager.requestAudioFocus(audioFocusRequest!!)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(
+                audioFocusChangeListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN
+            )
+        }
     }
 
     fun setSource(appId: Int) {
@@ -154,6 +235,40 @@ class RadioManager(private val context: Context) {
             Log.e(TAG, "Failed to bind", e)
             logCallback?.invoke("Bind Failed: ${e.message}")
         }
+    }
+
+    fun stopRadio() {
+        Log.d(TAG, "Stopping Radio...")
+        logCallback?.invoke("Stopping Radio...")
+        handler.removeCallbacks(sourceSwitchRunnable)
+        
+        // Unregister callbacks
+        if (remoteModule != null) {
+            for (i in 0..100) {
+                try {
+                    remoteModule?.unregister(moduleCallback, i)
+                } catch (e: Exception) {}
+            }
+        }
+        
+        // Release Audio Focus
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(audioFocusChangeListener)
+        }
+        
+        try {
+            context.unbindService(connection)
+        } catch (e: Exception) {
+            Log.e(TAG, "Unbind failed", e)
+        }
+        
+        remoteToolkit = null
+        remoteModule = null
+        remoteMain = null
+        logCallback?.invoke("Radio Stopped")
     }
     
     // --- Helper to send Binder Commands ---
