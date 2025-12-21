@@ -187,6 +187,23 @@ class RadioManager(private val context: Context) {
         
         // 3. Set band
         sendCmd(U_BAND, BAND_FM1)
+
+        // 4. Kickstart Service Helper (Found in NavRadio+/br1.java)
+        try {
+            val loggerIntent = Intent("com.syu.radio.Logger")
+            loggerIntent.setPackage("com.syu.radio")
+            if (Build.VERSION.SDK_INT >= 26) {
+                context.startForegroundService(loggerIntent)
+            } else {
+                context.startService(loggerIntent)
+            }
+            logCallback?.invoke("Started Logger Service")
+        } catch (e: Exception) {
+            Log.e(TAG, "Logger start failed", e)
+        }
+        
+        // 5. Broadcast Launch (Legacy wake-up)
+        context.sendBroadcast(Intent("com.syu.radio.Launch"))
     }
 
     private fun requestRadioFocus() {
