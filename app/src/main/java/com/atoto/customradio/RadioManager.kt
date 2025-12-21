@@ -173,14 +173,9 @@ class RadioManager(private val context: Context) {
     private fun initializeRadio() {
         logCallback?.invoke("Initializing Radio module...")
         
-        // 1. Force Source (Try 11 first, fallback to 1)
-        setSource(APP_ID_CAR_RADIO)
-        logCallback?.invoke("Requested App ID 11")
-        
-        handler.postDelayed({
-            setSource(APP_ID_RADIO)
-            logCallback?.invoke("Requested App ID 1")
-        }, 500)
+        // 1. Force Source to Radio (User confirmed ID 11 is mute)
+        setSource(APP_ID_RADIO)
+        logCallback?.invoke("Requested App ID 1")
 
         // 2. Set region 
         sendCmd(U_AREA, AREA_USA)
