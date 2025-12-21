@@ -17,7 +17,9 @@ class RadioManager(private val context: Context) {
         const val TAG = "RadioManager"
         const val MODULE_RADIO = 1 
         const val MODULE_MAIN  = 0
-        const val APP_ID_RADIO = 11
+        const val MODULE_CANBUS = 7
+        const val APP_ID_RADIO = 1 // User confirmed ID 1 gives sound
+        const val APP_ID_NULL  = 0
         
         // --- C_* Command Codes (Actionable) ---
         const val C_FREQ_UP      = 3  // Tune Up (Step)
@@ -40,6 +42,7 @@ class RadioManager(private val context: Context) {
     private var remoteToolkit: IRemoteToolkit? = null
     private var remoteModule: IRemoteModule? = null
     private var remoteMain: IRemoteModule? = null
+    private var remoteCanbus: IRemoteModule? = null
 
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var retryCount = 0
@@ -72,8 +75,9 @@ class RadioManager(private val context: Context) {
                 remoteToolkit = IRemoteToolkit.Stub.asInterface(service)
                 remoteModule = remoteToolkit?.getRemoteModule(MODULE_RADIO)
                 remoteMain = remoteToolkit?.getRemoteModule(MODULE_MAIN)
+                remoteCanbus = remoteToolkit?.getRemoteModule(MODULE_CANBUS)
                 
-                logCallback?.invoke("Modules Acquired: Radio=$remoteModule, Main=$remoteMain")
+                logCallback?.invoke("Modules: Radio=$remoteModule, Main=$remoteMain, Canbus=$remoteCanbus")
                 
                 // Start Source Switch Loop
                 retryCount = 0
@@ -91,8 +95,29 @@ class RadioManager(private val context: Context) {
             remoteToolkit = null
             remoteModule = null
             remoteMain = null
+            remoteCanbus = null
             handler.removeCallbacks(sourceSwitchRunnable)
         }
+    }
+
+    fun setSource(appId: Int) {
+        if (remoteMain != null) {
+             try {
+                 remoteMain?.cmd(0, intArrayOf(appId), null, null)
+                 val msg = "Manual Source Switch: ID $appId"
+                 Log.d(TAG, msg)
+                 logCallback?.invoke(msg)
+             } catch(e: Exception) {
+                 logCallback?.invoke("Source Switch Err: ${e.message}")
+             }
+        } else {
+             logCallback?.invoke("Main Module Not Connected")
+        }
+    }
+    
+    fun sendFytIntent(action: String) {
+        logCallback?.invoke("Sending Intent: $action")
+        sendIntent(action)
     }
 
     fun startRadio() {
@@ -104,13 +129,51 @@ class RadioManager(private val context: Context) {
             intent.setPackage("com.syu.ms")
             context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
             
-            // FYT specific intents to wake up the system/UI
+            // FYT specific intents
             context.sendBroadcast(Intent("com.syu.radio.Launch"))
+            // Stock uses HIDE in onResume (Active), SHOW in onPause. 
+            // So we send HIDE to say "We are Active".
+            context.startService(Intent("android.fyt.action.HIDE"))
+            
+            // Request Audio Focus (Crucial for Audio Mux)
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            val res = am.requestAudioFocus(
+                android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener { /* Handle focus change */ }
+                .build()
+            )
+            val focusMsg = if (res == android.media.AudioManager.AUDIOFOCUS_REQUEST_GRANTED) "Focus GRANTED" else "Focus FAILED"
+            Log.d(TAG, focusMsg)
+            logCallback?.invoke(focusMsg)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to bind or focus", e)
+            logCallback?.invoke("Init Error: ${e.message}")
+        }
+    }
+
+    fun stopRadio() {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            am.abandonAudioFocus(null)
+            
+            // Return to "Background" state
             context.startService(Intent("android.fyt.action.SHOW"))
             
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to bind", e)
-            logCallback?.invoke("Bind Failed: ${e.message}")
+            if (remoteMain != null) {
+                // Switch to 11 (Silent/CarRadio ID) to kill Sound 1
+                remoteMain?.cmd(0, intArrayOf(11), null, null)
+                logCallback?.invoke("Radio Stopped (Switched to 11)")
+            }
+        } catch(e: Exception) {
+            Log.e(TAG, "Stop Failed", e)
         }
     }
     
@@ -121,23 +184,37 @@ class RadioManager(private val context: Context) {
             return
         }
         try {
-            // Correct Usage verified from WCLisRadio:
-            // cmd(C_KEY, ints, null, null)
             val ints = if (params.isNotEmpty()) params else null
             
+            // This maps strictly to: remoteModule.cmd(cKey, ints, null, null)
+            // For Tune: cKey=1, ints=[Mode, Value]
             remoteModule?.cmd(cKey, ints, null, null)
-            Log.d(TAG, "Sent CMD: C_$cKey params=${params.joinToString()}")
+            
+            val msg = "Sent CMD: C_$cKey params=${params.joinToString()}"
+            Log.d(TAG, msg)
+            logCallback?.invoke(msg)
         } catch (e: Exception) {
             Log.e(TAG, "Remote Call Failed", e)
+            logCallback?.invoke("Cmd Failed: ${e.message}")
         }
     }
 
     fun tuneUp() {
-        sendCmd(C_FREQ_UP)
+        // Universal: Code 1 (U_FREQ), Step 0, +1
+        sendCmd(1, 0, 1)
+        logCallback?.invoke("Sent Tune UP (Step +1)")
     }
 
     fun tuneDown() {
-        sendCmd(C_FREQ_DOWN)
+        // Universal: Code 1 (U_FREQ), Step 0, -1
+        sendCmd(1, 0, -1)
+        logCallback?.invoke("Sent Tune DOWN (Step -1)")
+    }
+    
+    fun tuneTo(freqInt: Int) {
+        // Universal: Code 1 (U_FREQ), Direct 1, Value
+        sendCmd(1, 1, freqInt)
+        logCallback?.invoke("Sent Direct Tune to $freqInt")
     }
 
     fun seekUp() {

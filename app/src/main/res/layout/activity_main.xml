@@ -126,13 +126,56 @@
         android:padding="8dp"
         app:layout_constraintBottom_toBottomOf="parent">
         
-        <TextView
-            android:layout_width="wrap_content"
+        <HorizontalScrollView
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="DEBUG SNIFFER"
-            android:textColor="#666666"
-            android:textSize="10sp"
-            android:textStyle="bold" />
+            android:scrollbars="none"
+            android:layout_marginBottom="4dp">
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:orientation="horizontal">
+                <Button
+                    android:id="@+id/btn_debug_src1"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:text="Src:1"
+                    android:textSize="10sp"
+                    android:backgroundTint="#444444"
+                    android:layout_marginEnd="4dp"/>
+                <Button
+                    android:id="@+id/btn_debug_src11"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:text="Src:11"
+                    android:textSize="10sp"
+                    android:backgroundTint="#444444"
+                    android:layout_marginEnd="4dp"/>
+                 <Button
+                    android:id="@+id/btn_debug_hide"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:text="HIDE"
+                    android:textSize="10sp"
+                    android:backgroundTint="#444444"
+                    android:layout_marginEnd="4dp"/>
+                 <Button
+                    android:id="@+id/btn_debug_show"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:text="SHOW"
+                    android:textSize="10sp"
+                    android:backgroundTint="#444444"
+                    android:layout_marginEnd="4dp"/>
+                 <Button
+                    android:id="@+id/btn_debug_995"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:text="104.7"
+                    android:textSize="10sp"
+                    android:backgroundTint="#444444"/>
+            </LinearLayout>
+        </HorizontalScrollView>
 
         <TextView
             android:id="@+id/tv_log"

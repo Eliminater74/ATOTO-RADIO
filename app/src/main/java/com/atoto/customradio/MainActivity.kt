@@ -29,20 +29,20 @@ class MainActivity : AppCompatActivity() {
         radioManager.logCallback = { msg ->
             runOnUiThread { appendLog(msg) }
         }
-        
-        // Try to wake up hardware on launch
-        radioManager.startRadio()
 
         statusText = findViewById(R.id.tv_status)
         val frequencyText = findViewById<TextView>(R.id.tv_frequency)
         logText = findViewById(R.id.tv_log)
         logText.movementMethod = ScrollingMovementMethod()
 
+        // Try to wake up hardware on launch (Moved after View Init to prevent NPE)
+        radioManager.startRadio()
+
         val btnNext = findViewById<Button>(R.id.btn_next)
         val btnPrev = findViewById<Button>(R.id.btn_prev)
         val btnSeekUp = findViewById<Button>(R.id.btn_seek_up)
         val btnSeekDown = findViewById<Button>(R.id.btn_seek_down)
-
+        
         var currentFreq = 101.5
 
         // --- Configured with Correct C_ Codes ---
@@ -69,6 +69,23 @@ class MainActivity : AppCompatActivity() {
             updateStatus("Action: Seek Down")
             radioManager.seekDown() // Uses C_SEEK_DOWN (6)
         }
+        
+        // --- Debug Controls Wiring ---
+        findViewById<Button>(R.id.btn_debug_src1).setOnClickListener { 
+            radioManager.setSource(1) 
+        }
+        findViewById<Button>(R.id.btn_debug_src11).setOnClickListener { 
+            radioManager.setSource(11) 
+        }
+        findViewById<Button>(R.id.btn_debug_hide).setOnClickListener { 
+            radioManager.sendFytIntent("android.fyt.action.HIDE") 
+        }
+        findViewById<Button>(R.id.btn_debug_show).setOnClickListener { 
+            radioManager.sendFytIntent("android.fyt.action.SHOW") 
+        }
+        findViewById<Button>(R.id.btn_debug_995).setOnClickListener { 
+            radioManager.tuneTo(10470) // Direct Tune to 104.7 MHz (Q105)
+        }
 
         // Start Sniffer for debugging
         registerSniffer()
@@ -76,6 +93,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        radioManager.stopRadio()
         unregisterReceiver(snifferReceiver)
     }
 
