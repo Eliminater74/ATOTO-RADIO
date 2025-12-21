@@ -24,7 +24,8 @@ class RadioManager(private val context: Context) {
         const val TAG = "RadioManager"
         const val MODULE_RADIO = 1 
         const val MODULE_MAIN  = 0
-        const val APP_ID_RADIO = 1 // Corrected to 1 for Sound
+        const val APP_ID_RADIO = 1 // Standard Radio
+        const val APP_ID_CAR_RADIO = 11 // Alternative Radio ID for some UIS7862
         
         // --- G_* Get/Notify Codes (From MCU) ---
         const val G_FREQ = 1          // Current frequency update
@@ -67,19 +68,20 @@ class RadioManager(private val context: Context) {
     private val moduleCallback = object : IModuleCallback.Stub() {
         override fun update(updateCode: Int, ints: IntArray?, floats: FloatArray?, strs: Array<String>?) {
             val intsStr = ints?.joinToString() ?: "null"
-            Log.d(TAG, "MCU Callback: Code=$updateCode, ints=[$intsStr]")
+            // VERBOSE LOGGING: Log everything to help identify correct IDs
+            if (updateCode != 0) { // Skip periodic heartbeat if it's too noisy
+                Log.d(TAG, "MCU Callback: Code=$updateCode, ints=[$intsStr]")
+            }
             
             handler.post {
                 when (updateCode) {
                     G_FREQ -> {
                         val freq = ints?.getOrNull(0) ?: return@post
                         onFreqChange?.invoke(freq)
-                        logCallback?.invoke("MCU Frequency: $freq")
                     }
                     G_BAND -> {
                         val band = ints?.getOrNull(0) ?: return@post
                         onBandChange?.invoke(band)
-                        logCallback?.invoke("MCU Band: $band")
                     }
                 }
             }
@@ -129,7 +131,16 @@ class RadioManager(private val context: Context) {
                 for (i in 0..100) {
                     remoteModule?.register(moduleCallback, i, 1)
                 }
-                logCallback?.invoke("Callbacks Registered (0-100)")
+                logCallback?.invoke("Callbacks Registered")
+
+                // FORCE UPDATE: Request current state
+                try {
+                    remoteModule?.get(G_FREQ, null, null, null)
+                    remoteModule?.get(G_BAND, null, null, null)
+                    logCallback?.invoke("MCU Status Requested (get)")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Get failed", e)
+                }
 
                 // Request Audio Focus
                 requestRadioFocus()
@@ -158,11 +169,16 @@ class RadioManager(private val context: Context) {
     }
 
     private fun initializeRadio() {
-        // Essential wake-up sequence
         logCallback?.invoke("Initializing Radio module...")
         
-        // 1. Force Source to Radio
-        setSource(APP_ID_RADIO)
+        // 1. Force Source (Try 11 first, fallback to 1)
+        setSource(APP_ID_CAR_RADIO)
+        logCallback?.invoke("Requested App ID 11")
+        
+        handler.postDelayed({
+            setSource(APP_ID_RADIO)
+            logCallback?.invoke("Requested App ID 1")
+        }, 500)
 
         // 2. Set region 
         sendCmd(U_AREA, AREA_USA)
@@ -229,7 +245,7 @@ class RadioManager(private val context: Context) {
             
             // FYT specific intents to wake up the system/UI
             // context.sendBroadcast(Intent("com.syu.radio.Launch")) // Removed to prevent conflict
-            context.startService(Intent("android.fyt.action.HIDE"))
+            context.sendBroadcast(Intent("android.fyt.action.HIDE"))
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to bind", e)
