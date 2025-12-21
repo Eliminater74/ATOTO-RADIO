@@ -70,7 +70,9 @@ class RadioManager(private val context: Context) {
             val intsStr = ints?.joinToString() ?: "null"
             // VERBOSE LOGGING: Log everything to help identify correct IDs
             if (updateCode != 0) { // Skip periodic heartbeat if it's too noisy
-                Log.d(TAG, "MCU Callback: Code=$updateCode, ints=[$intsStr]")
+                val logMsg = "MCU Debug: Code=$updateCode, ints=[$intsStr]"
+                Log.d(TAG, logMsg)
+                handler.post { logCallback?.invoke(logMsg) }
             }
             
             handler.post {
