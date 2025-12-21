@@ -19,22 +19,27 @@ class RadioManager(private val context: Context) {
         const val MODULE_MAIN  = 0
         const val APP_ID_RADIO = 1 // Corrected to 1 for Sound
         
-        // --- C_* Command Codes (Actionable) ---
-        const val C_FREQ_UP      = 3  // Tune Up (Step)
-        const val C_FREQ_DOWN    = 4  // Tune Down (Step)
-        const val C_SEEK_UP      = 5  // Seek Up (Search)
-        const val C_SEEK_DOWN    = 6  // Seek Down (Search)
-        const val C_SCAN         = 9  // Scan/Browse
-        const val C_SAVE         = 10 // Store/Save
-        const val C_BAND         = 11 // Change Band
-        const val C_FREQ         = 13 // Set Frequency Direct
-        const val C_SEARCH       = 22 // Auto Search/Store (AMS)
+        // --- U_* Update Codes (Direct MCU Commands) ---
+        const val U_FREQ = 1          // Set frequency / tune
+        const val U_AREA = 2          // Set region
+        const val U_BAND = 0          // Set band
+        const val U_SEARCH_STATE = 22 // Set search state (seek/scan)
         
-        // --- U_* Update Codes (For reference/callbacks) ---
-        const val U_BAND         = 0
-        const val U_FREQ         = 1
+        // --- Frequency Modes ---
+        const val FREQ_BY_STEP = 0
+        const val FREQ_DIRECT = 1
         
-        const val REGION_USA = 1 
+        // --- Search States ---
+        const val SEARCH_STATE_NONE = 0
+        const val SEARCH_STATE_FORE = 2  // Seek forward
+        const val SEARCH_STATE_BACK = 3  // Seek backward
+        
+        // --- Regions ---
+        const val AREA_USA = 0
+        const val AREA_EUROPE = 2  // Default for many FYT units
+        
+        // --- Bands (example; may need adjustment) ---
+        const val BAND_FM1 = 0
     }
 
     private var remoteToolkit: IRemoteToolkit? = null
@@ -75,6 +80,9 @@ class RadioManager(private val context: Context) {
                 
                 logCallback?.invoke("Modules Acquired: Radio=$remoteModule, Main=$remoteMain")
                 
+                // Initialize radio settings after connection
+                initializeRadio()
+                
                 // Start Source Switch Loop
                 retryCount = 0
                 handler.post(sourceSwitchRunnable)
@@ -93,6 +101,16 @@ class RadioManager(private val context: Context) {
             remoteMain = null
             handler.removeCallbacks(sourceSwitchRunnable)
         }
+    }
+
+    private fun initializeRadio() {
+        // Set region to USA (adjust if needed for your area)
+        sendCmd(U_AREA, AREA_USA)
+        logCallback?.invoke("Set Region to USA")
+        
+        // Set to FM band (example; add logic for AM/FM switching)
+        sendCmd(U_BAND, BAND_FM1)
+        logCallback?.invoke("Set Band to FM1")
     }
 
     fun setSource(appId: Int) {
@@ -139,96 +157,101 @@ class RadioManager(private val context: Context) {
     }
     
     // --- Helper to send Binder Commands ---
-    private fun sendCmd(cKey: Int, vararg params: Int) {
+    private fun sendCmd(uKey: Int, vararg params: Int) {
         if (remoteModule == null) {
             Log.w(TAG, "Radio Module not connected!")
             return
         }
         try {
-            // Correct Usage verified from WCLisRadio:
-            // cmd(C_KEY, ints, null, null)
             val ints = if (params.isNotEmpty()) params else null
-            
-            remoteModule?.cmd(cKey, ints, null, null)
-            Log.d(TAG, "Sent CMD: C_$cKey params=${params.joinToString()}")
+            remoteModule?.cmd(uKey, ints, null, null)
+            Log.d(TAG, "Sent CMD: U_$uKey params=${params.joinToString()}")
         } catch (e: Exception) {
             Log.e(TAG, "Remote Call Failed", e)
         }
     }
 
     fun tuneUp() {
-        // Universal: Code 1 (U_FREQ), Step 0, +1
-        sendCmd(1, 0, 1)
+        // Step up: U_FREQ, FREQ_BY_STEP, +1
+        sendCmd(U_FREQ, FREQ_BY_STEP, 1)
         logCallback?.invoke("Sent Tune UP (Step +1)")
     }
 
     fun tuneDown() {
-        // Universal: Code 1 (U_FREQ), Step 0, -1
-        sendCmd(1, 0, -1)
+        // Step down: U_FREQ, FREQ_BY_STEP, -1
+        sendCmd(U_FREQ, FREQ_BY_STEP, -1)
         logCallback?.invoke("Sent Tune DOWN (Step -1)")
     }
     
     fun tuneTo(freqInt: Int) {
-        // Universal: Code 1 (U_FREQ), Direct 1, Value
-        sendCmd(1, 1, freqInt)
+        // Direct tune: U_FREQ, FREQ_DIRECT, freqInt (FM in 10kHz units, e.g., 10170)
+        sendCmd(U_FREQ, FREQ_DIRECT, freqInt)
         logCallback?.invoke("Sent Direct Tune to $freqInt")
     }
 
     fun seekUp() {
-        sendCmd(C_SEEK_UP)
+        // Seek forward: U_SEARCH_STATE, SEARCH_STATE_FORE
+        sendCmd(U_SEARCH_STATE, SEARCH_STATE_FORE)
+        logCallback?.invoke("Sent Seek UP")
     }
 
     fun seekDown() {
-        sendCmd(C_SEEK_DOWN)
+        // Seek backward: U_SEARCH_STATE, SEARCH_STATE_BACK
+        sendCmd(U_SEARCH_STATE, SEARCH_STATE_BACK)
+        logCallback?.invoke("Sent Seek DOWN")
     }
 
+    fun stopSeek() {
+        // Stop seek/scan: U_SEARCH_STATE, SEARCH_STATE_NONE
+        sendCmd(U_SEARCH_STATE, SEARCH_STATE_NONE)
+        logCallback?.invoke("Sent Stop Seek")
+    }
+
+    // --- Additional methods (updated for U_* codes) ---
     fun setBand(band: Int) {
-        // C_BAND takes parameter? WCLisRadio sends cmd(11, -1) for toggle?
-        // Let's assume sending the band index might work, or just toggle.
-        // For now, toggle if no param needed, or send band.
-        sendCmd(C_BAND, band)
+        sendCmd(U_BAND, band)
+        logCallback?.invoke("Set Band to $band")
     }
 
-    fun setFrequency(freqOfBand: Int) {
-        sendCmd(C_FREQ, freqOfBand)
+    fun setRegion(region: Int) {
+        sendCmd(U_AREA, region)
+        logCallback?.invoke("Set Region to $region")
     }
-    
+
+    // Stubbed methods (implement as needed)
     fun scan() {
-        sendCmd(C_SCAN)
+        // Implement scan if needed (U_SCAN = 20, param 1 to start)
     }
     
     fun autoSearch() {
-        sendCmd(C_SEARCH)
+        // Implement auto search/store
     }
 
-    // --- Stubbed or Logic-only methods ---
     fun nextPreset() {
-        // Logic to jump to next preset frequency
-        // Needs state awareness (which we don't have yet from callbacks)
-        // Fallback: Tune Up
-        tuneUp()
+        tuneUp()  // Fallback
     }
 
     fun prevPreset() {
-        tuneDown()
+        tuneDown()  // Fallback
     }
     
     fun toggleStereo() {
-        // C_STERO = 17 (from FinalRadio)
-        sendCmd(17) 
+        // U_STEREO = 21, param 0/1/2 (auto/mono/stereo)
+        sendCmd(21, 0)  // Example: auto
     }
     
     fun setLocalDx(isLocal: Boolean) {
-        // C_LOC = 18
-        sendCmd(18, if(isLocal) 1 else 0)
+        // U_LOC = 23, param 0=DX, 1=LOCAL
+        sendCmd(23, if (isLocal) 1 else 0)
     }
-    // Normally handled by Audio Focus/Source Switching, but we can try generic
+
     fun powerOn() {
-        // No explicit U_POWER in reference, relying on bind/focus
+        // No explicit power command; handled by source switch
     }
-    fun powerOff() {}
 
-
+    fun powerOff() {
+        // Same
+    }
 
     private fun sendIntent(action: String) {
         try {
