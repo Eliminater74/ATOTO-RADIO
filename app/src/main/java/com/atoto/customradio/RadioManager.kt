@@ -130,7 +130,6 @@ class RadioManager(private val context: Context) {
             context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
             
             // FYT specific intents
-            context.sendBroadcast(Intent("com.syu.radio.Launch"))
             // Stock uses HIDE in onResume (Active), SHOW in onPause. 
             // So we send HIDE to say "We are Active".
             context.startService(Intent("android.fyt.action.HIDE"))
@@ -168,9 +167,9 @@ class RadioManager(private val context: Context) {
             context.startService(Intent("android.fyt.action.SHOW"))
             
             if (remoteMain != null) {
-                // Switch to 11 (Silent/CarRadio ID) to kill Sound 1
-                remoteMain?.cmd(0, intArrayOf(11), null, null)
-                logCallback?.invoke("Radio Stopped (Switched to 11)")
+                // Return to Null/Release state (Safer than force 11)
+                remoteMain?.cmd(0, intArrayOf(APP_ID_NULL), null, null)
+                logCallback?.invoke("Radio Stopped (Sent AppID 0)")
             }
         } catch(e: Exception) {
             Log.e(TAG, "Stop Failed", e)

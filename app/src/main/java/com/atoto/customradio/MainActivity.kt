@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        radioManager.stopRadio()
+        // radioManager.stopRadio() // Disabled to match "Last Known Good" state. Restoring sound is priority.
         unregisterReceiver(snifferReceiver)
     }
 
