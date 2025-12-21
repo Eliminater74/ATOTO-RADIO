@@ -1,103 +1,206 @@
 package com.atoto.customradio
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
+import android.os.IBinder
 import android.util.Log
+import com.syu.ipc.IRemoteModule
+import com.syu.ipc.IRemoteToolkit
 
-/**
- * Manages communication with the ATOTO/FYT Hardware.
- * Based on common FYT (UIS7862) Broadcast Intents.
- */
 class RadioManager(private val context: Context) {
+
+    var logCallback: ((String) -> Unit)? = null
 
     companion object {
         const val TAG = "RadioManager"
+        const val MODULE_RADIO = 1 
+        const val MODULE_MAIN  = 0
+        const val APP_ID_RADIO = 11
         
-        // Strategy 1: Standard Android Media Keys (Universal)
-        // Strategy 2: Common Chinese Head Unit Intents (FYT/MTC)
-        private const val ACTION_FYT_RADIO_NEXT = "com.syu.radio.next"
-        private const val ACTION_FYT_RADIO_PREV = "com.syu.radio.prev"
+        // --- C_* Command Codes (Actionable) ---
+        const val C_FREQ_UP      = 3  // Tune Up (Step)
+        const val C_FREQ_DOWN    = 4  // Tune Down (Step)
+        const val C_SEEK_UP      = 5  // Seek Up (Search)
+        const val C_SEEK_DOWN    = 6  // Seek Down (Search)
+        const val C_SCAN         = 9  // Scan/Browse
+        const val C_SAVE         = 10 // Store/Save
+        const val C_BAND         = 11 // Change Band
+        const val C_FREQ         = 13 // Set Frequency Direct
+        const val C_SEARCH       = 22 // Auto Search/Store (AMS)
+        
+        // --- U_* Update Codes (For reference/callbacks) ---
+        const val U_BAND         = 0
+        const val U_FREQ         = 1
+        
+        const val REGION_USA = 1 
     }
 
-    fun nextStation() {
-        // Try generic Media Key first (works on many units)
-        sendMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
-        // Also fire the intent just in case
-        sendIntent(ACTION_FYT_RADIO_NEXT)
-    }
+    private var remoteToolkit: IRemoteToolkit? = null
+    private var remoteModule: IRemoteModule? = null
+    private var remoteMain: IRemoteModule? = null
 
-    fun prevStation() {
-        sendMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
-        sendIntent(ACTION_FYT_RADIO_PREV)
-    }
-    
-    fun seekUp() {
-        sendMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD)
-        sendIntent("com.syu.radio.seekup")
-    }
-    
-    fun seekDown() {
-        sendMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_REWIND)
-        sendIntent("com.syu.radio.seekdown")
-    }
-
-    private fun sendMediaKey(keyCode: Int) {
-        try {
-            Log.d(TAG, "Injecting Media Key: $keyCode")
-            val instrumentation = android.app.Instrumentation()
-            // This requires standard inputs, might fail if not system app or lacking permissions
-            // Note: Instrumentation cannot be run on main thread easily in standard apps without thread.
-            // Using AudioManager is safer for non-system apps:
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-            audioManager.dispatchMediaKeyEvent(
-                android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
-            )
-            audioManager.dispatchMediaKeyEvent(
-                android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send Media Key via AudioManager", e)
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var retryCount = 0
+    private val sourceSwitchRunnable = object : Runnable {
+        override fun run() {
+            if (remoteMain != null && retryCount < 5) {
+                try {
+                    val payload = intArrayOf(APP_ID_RADIO)
+                    remoteMain?.cmd(0, payload, null, null)
+                    val msg = "Requested App ID 11 (Switch) - Try ${retryCount + 1}"
+                    Log.d(TAG, msg)
+                    logCallback?.invoke(msg)
+                    retryCount++
+                    handler.postDelayed(this, 1000)
+                } catch (e: Exception) {
+                    val err = "Switch Failed: ${e.message}"
+                    Log.e(TAG, err, e)
+                    logCallback?.invoke(err)
+                }
+            }
         }
-        
-        // Fallback: Broadcast the media button intent (Standard Headset Hook emulation)
-        try {
-            val intent = Intent(Intent.ACTION_MEDIA_BUTTON)
-            val event = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode)
-            intent.putExtra(Intent.EXTRA_KEY_EVENT, event)
-            context.sendOrderedBroadcast(intent, null)
-            
-            val intentUp = Intent(Intent.ACTION_MEDIA_BUTTON)
-            val eventUp = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode)
-            intentUp.putExtra(Intent.EXTRA_KEY_EVENT, eventUp)
-            context.sendOrderedBroadcast(intentUp, null)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to broadcast Media Button Intent", e)
+    }
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val msg = "Connected to Toolkit Service"
+            Log.d(TAG, msg)
+            logCallback?.invoke(msg)
+            try {
+                remoteToolkit = IRemoteToolkit.Stub.asInterface(service)
+                remoteModule = remoteToolkit?.getRemoteModule(MODULE_RADIO)
+                remoteMain = remoteToolkit?.getRemoteModule(MODULE_MAIN)
+                
+                logCallback?.invoke("Modules Acquired: Radio=$remoteModule, Main=$remoteMain")
+                
+                // Start Source Switch Loop
+                retryCount = 0
+                handler.post(sourceSwitchRunnable)
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to get Modules", e)
+                logCallback?.invoke("Error getting modules: ${e.message}")
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            Log.d(TAG, "Disconnected from Syu Service")
+            logCallback?.invoke("Service Disconnected")
+            remoteToolkit = null
+            remoteModule = null
+            remoteMain = null
+            handler.removeCallbacks(sourceSwitchRunnable)
         }
     }
 
     fun startRadio() {
-        // Try to wake up the radio hardware
-        sendIntent("com.syu.radio.Launch")
-        sendIntent("com.syu.radio.switch")
-        // Request Audio Focus (Standard Android)
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-        audioManager.requestAudioFocus(
-            null, 
-            android.media.AudioManager.STREAM_MUSIC, 
-            android.media.AudioManager.AUDIOFOCUS_GAIN
-        )
+        Log.d(TAG, "Binding to com.syu.ms.toolkit ...")
+        logCallback?.invoke("Binding to Service...")
+        try {
+            // Correct Intent Action verified from Stock Source
+            val intent = Intent("com.syu.ms.toolkit")
+            intent.setPackage("com.syu.ms")
+            context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            
+            // FYT specific intents to wake up the system/UI
+            context.sendBroadcast(Intent("com.syu.radio.Launch"))
+            context.startService(Intent("android.fyt.action.SHOW"))
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to bind", e)
+            logCallback?.invoke("Bind Failed: ${e.message}")
+        }
     }
+    
+    // --- Helper to send Binder Commands ---
+    private fun sendCmd(cKey: Int, vararg params: Int) {
+        if (remoteModule == null) {
+            Log.w(TAG, "Radio Module not connected!")
+            return
+        }
+        try {
+            // Correct Usage verified from WCLisRadio:
+            // cmd(C_KEY, ints, null, null)
+            val ints = if (params.isNotEmpty()) params else null
+            
+            remoteModule?.cmd(cKey, ints, null, null)
+            Log.d(TAG, "Sent CMD: C_$cKey params=${params.joinToString()}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Remote Call Failed", e)
+        }
+    }
+
+    fun tuneUp() {
+        sendCmd(C_FREQ_UP)
+    }
+
+    fun tuneDown() {
+        sendCmd(C_FREQ_DOWN)
+    }
+
+    fun seekUp() {
+        sendCmd(C_SEEK_UP)
+    }
+
+    fun seekDown() {
+        sendCmd(C_SEEK_DOWN)
+    }
+
+    fun setBand(band: Int) {
+        // C_BAND takes parameter? WCLisRadio sends cmd(11, -1) for toggle?
+        // Let's assume sending the band index might work, or just toggle.
+        // For now, toggle if no param needed, or send band.
+        sendCmd(C_BAND, band)
+    }
+
+    fun setFrequency(freqOfBand: Int) {
+        sendCmd(C_FREQ, freqOfBand)
+    }
+    
+    fun scan() {
+        sendCmd(C_SCAN)
+    }
+    
+    fun autoSearch() {
+        sendCmd(C_SEARCH)
+    }
+
+    // --- Stubbed or Logic-only methods ---
+    fun nextPreset() {
+        // Logic to jump to next preset frequency
+        // Needs state awareness (which we don't have yet from callbacks)
+        // Fallback: Tune Up
+        tuneUp()
+    }
+
+    fun prevPreset() {
+        tuneDown()
+    }
+    
+    fun toggleStereo() {
+        // C_STERO = 17 (from FinalRadio)
+        sendCmd(17) 
+    }
+    
+    fun setLocalDx(isLocal: Boolean) {
+        // C_LOC = 18
+        sendCmd(18, if(isLocal) 1 else 0)
+    }
+    // Normally handled by Audio Focus/Source Switching, but we can try generic
+    fun powerOn() {
+        // No explicit U_POWER in reference, relying on bind/focus
+    }
+    fun powerOff() {}
+
+
 
     private fun sendIntent(action: String) {
         try {
-            Log.d(TAG, "Sending Intent: $action")
             val intent = Intent(action)
             intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
-            // Some units need this flag to "Start" the service
-            intent.addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             context.sendBroadcast(intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to send intent: $action", e)
-        }
+        } catch (e: Exception) {}
     }
 }

@@ -24,6 +24,12 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         radioManager = RadioManager(this)
+        
+        // --- Connect Debug Console ---
+        radioManager.logCallback = { msg ->
+            runOnUiThread { appendLog(msg) }
+        }
+        
         // Try to wake up hardware on launch
         radioManager.startRadio()
 
@@ -39,32 +45,29 @@ class MainActivity : AppCompatActivity() {
 
         var currentFreq = 101.5
 
+        // --- Configured with Correct C_ Codes ---
         btnNext.setOnClickListener {
-            currentFreq += 0.2
-            frequencyText.text = "%.1f".format(currentFreq)
-            updateStatus("Action: NEXT Presets")
-            radioManager.nextStation()
+            updateStatus("Action: Tune Up")
+            radioManager.tuneUp()
         }
 
         btnPrev.setOnClickListener {
-            currentFreq -= 0.2
-            frequencyText.text = "%.1f".format(currentFreq)
-            updateStatus("Action: PREV Presets")
-            radioManager.prevStation()
+            updateStatus("Action: Tune Down")
+            radioManager.tuneDown()
         }
         
         btnSeekUp.setOnClickListener {
-            currentFreq += 0.1
+            currentFreq += 0.1 // Visual only, real update comes from callback later
             frequencyText.text = "%.1f".format(currentFreq)
-            updateStatus("Action: SEEK UP")
-            radioManager.seekUp()
+            updateStatus("Action: Seek Up")
+            radioManager.seekUp() // Uses C_SEEK_UP (5)
         }
         
         btnSeekDown.setOnClickListener {
             currentFreq -= 0.1
             frequencyText.text = "%.1f".format(currentFreq)
-            updateStatus("Action: SEEK DOWN")
-            radioManager.seekDown()
+            updateStatus("Action: Seek Down")
+            radioManager.seekDown() // Uses C_SEEK_DOWN (6)
         }
 
         // Start Sniffer for debugging
