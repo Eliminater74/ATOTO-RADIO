@@ -257,24 +257,43 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     // --- Core Logic ---
     private fun initializeRadio() {
-        log("Initializing Radio module...")
-        setSource(APP_ID_RADIO)
-        log("Requested App ID $APP_ID_RADIO (Radio)")
+        log("Initializing Radio module with delayed sequence...")
+        
+        // Initial Startup Delay to let service stabilize
+        handler.postDelayed({
+            setSource(APP_ID_RADIO)
+            claimRadioAudioSession() // [1] Claim immediately after source switch
+            
+            // Handshake/Init
+            setRegion(RadioRegion.USA)
+            setBand(RadioBand.FM1)
+            setStereoMode(StereoMode.AUTO)
+            setLocalDx(false)
+            
+            // Required Broadcasts
+            try {
+                context.sendBroadcast(Intent("com.syu.radio.Launch"))
+            } catch(e: Exception) { log("Launch broadcast failed") }
 
-        // Required Broadcasts (User noted these are mandatory for MCU responsiveness)
+            // Second Stage: Tune and Re-Claim
+            handler.postDelayed({
+                tuneTo(10470) // Force initial tune to known good freq (104.7)
+                claimRadioAudioSession() // [2] Re-claim after tune to lock audio
+                stopSeek() 
+            }, 500)
+            
+        }, 300)
+    }
+
+    private fun claimRadioAudioSession() {
         try {
-            log("Sending com.syu.radio.Launch broadcast...")
-            context.sendBroadcast(Intent("com.syu.radio.Launch"))
-        } catch(e: Exception) {
-            log("Failed to send Launch broadcast: ${e.message}")
+            val intent = Intent("request.radio.switch_st")
+            intent.setPackage("com.syu.ms")
+            context.sendBroadcast(intent)
+            log("Audio Session Claimed (request.radio.switch_st)")
+        } catch (e: Exception) {
+            log("Failed to claim radio session: ${e.message}")
         }
-
-        // Handshake/Init
-        setRegion(RadioRegion.USA)
-        setBand(RadioBand.FM1)
-        setStereoMode(StereoMode.AUTO)
-        setLocalDx(false)
-        stopSeek()
     }
     
     private fun requestRadioFocus() {
@@ -347,41 +366,46 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     // --- RadioBackend methods ---
 
     override fun tuneTo(freq: Int) {
-        // [FREQ_DIRECT, freq, 0]
         log("tuneTo($freq)")
         sendCmdC(C_FREQ, FREQ_DIRECT, freq, 0)
+        handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun tuneStepUp() {
         log("tuneStepUp -> C_FREQ STEP +1")
         // C_FREQ (13), mode=STEP(0), step=+1, unused=0
         sendCmdC(C_FREQ, FREQ_BY_STEP, 1, 0)
+        handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun tuneStepDown() {
         log("tuneStepDown -> C_FREQ STEP -1")
         // C_FREQ (13), mode=STEP(0), step=-1, unused=0
         sendCmdC(C_FREQ, FREQ_BY_STEP, -1, 0)
+        handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun seekUp() {
         log("seekUp -> U_SEARCH_STATE FORE")
         sendCmdU(U_SEARCH_STATE, SEARCH_FORE)
+        handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun seekDown() {
         log("seekDown -> U_SEARCH_STATE BACK")
         sendCmdU(U_SEARCH_STATE, SEARCH_BACK)
+        handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun stopSeek() {
         log("stopSeek -> U_SEARCH_STATE STOP")
-        sendCmdU(U_SEARCH_STATE, SEARCH_STOP)
+        sendCmdU(U_SEARCH_STATE, SEARCH_STATE_NONE)
     }
 
     override fun startScan() {
         log("startScan()")
         sendCmdC(C_SCAN)
+        handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun stopScan() {
