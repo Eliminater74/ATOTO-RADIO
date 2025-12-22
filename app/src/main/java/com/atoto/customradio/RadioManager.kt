@@ -208,8 +208,10 @@ class RadioManager(private val context: Context) {
                 initializeRadio()
                 
                 // Start Source Switch Loop
-                retryCount = 0
-                handler.post(sourceSwitchRunnable)
+                // User requirement: "Start clean ... DO NOT SEND repeatedly switching app ID"
+                // Disabling redundant loop as setSource is called in initializeRadio
+                // retryCount = 0
+                // handler.post(sourceSwitchRunnable)
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to get Modules", e)
@@ -230,32 +232,29 @@ class RadioManager(private val context: Context) {
     private fun initializeRadio() {
         logCallback?.invoke("Initializing Radio module...")
         
-        // 1. Force Source to Radio (User confirmed ID 11 is mute)
+        // Recommended initialization order (Start Clean):
+        // 1. Force Source to Radio
         setSource(APP_ID_RADIO)
-        logCallback?.invoke("Requested App ID 1")
-
+        
         // 2. Set region 
         setRegion(AREA_USA)
         
-        // 3. Set band
+        // 3. Set band (0 = FM1)
         setBand(BAND_FM1)
 
-        // 4. Kickstart Service Helper (Found in NavRadio+/br1.java)
-        try {
-            val loggerIntent = Intent("com.syu.radio.Logger")
-            loggerIntent.setPackage("com.syu.radio")
-            if (Build.VERSION.SDK_INT >= 26) {
-                context.startForegroundService(loggerIntent)
-            } else {
-                context.startService(loggerIntent)
-            }
-            logCallback?.invoke("Started Logger Service")
-        } catch (e: Exception) {
-            Log.e(TAG, "Logger start failed", e)
-        }
+        // 4. Initialize Tuner State (Required for MCU to accept commands)
+        sendCmdC(C_STEREO, 0) // Auto
+        sendCmdC(C_LOC, 0)    // DX
         
-        // 5. Broadcast Launch (Legacy wake-up)
+        // 5. Ensure no seek is active
+        stopSeek()
+
+        logCallback?.invoke("Radio Initialized (Source, Region, Band, Stereo, Loc set)")
+        
+        // Legacy/NavRadio helper intents commented out:
+        /*
         context.sendBroadcast(Intent("com.syu.radio.Launch"))
+        */
     }
 
     private fun requestRadioFocus() {
@@ -403,8 +402,8 @@ class RadioManager(private val context: Context) {
     
     fun tuneTo(freqInt: Int) {
         // Direct tune via C_FREQ with mode + value:
-        // [FREQ_DIRECT, freqInt]  (FM in 10kHz units, e.g. 10170)
-        sendCmdC(C_FREQ, FREQ_DIRECT, freqInt)
+        // [FREQ_DIRECT, freqInt, 0 (bandIndex optional/dummy)]
+        sendCmdC(C_FREQ, FREQ_DIRECT, freqInt, 0)
         logCallback?.invoke("Sent Direct Tune to $freqInt")
     }
 
