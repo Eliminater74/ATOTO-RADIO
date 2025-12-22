@@ -8,7 +8,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="My Custom Radio"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
         
