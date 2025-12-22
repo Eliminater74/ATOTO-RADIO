@@ -88,14 +88,9 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         const val BAND_FM1 = 0 
     }
     
-    // --- Internal State ---
-    private var remoteToolkit: IRemoteToolkit? = null
-    private var remoteModule: IRemoteModule? = null
-    private var remoteMain: IRemoteModule? = null
+    private var currentFreq: Int = 8790 // Default fallback
 
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private var audioFocusRequest: AudioFocusRequest? = null
-    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+// ...(keep existing callbacks)...
 
     // --- MCU Callback Implementation ---
     private val moduleCallback = object : IModuleCallback.Stub() {
@@ -106,7 +101,7 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
             handler.post {
                 when (updateCode) {
-                    // Standard FYT codes (keep just in case)
+                    // Standard FYT codes
                     G_FREQ -> {
                         val freq = ints?.getOrNull(0) ?: return@post
                         log("G_FREQ -> $freq")
@@ -125,16 +120,14 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
                         onRegionChanged?.invoke(regionEnum)
                     }
                     
-                    // ATOTO Multiplexed Code (The real data source)
+                    // ATOTO Multiplexed Code
                     28 -> { 
                         if (ints != null && ints.isNotEmpty()) {
-                            // If size is 1, it's just an ACK for the command
                             if (ints.size == 1) {
                                 log("MCU ACK (28) -> Cmd: ${ints[0]}")
                             } else {
-                                // If size >= 2, it contains data: [CmdID, Value, ...]
                                 val cmdId = ints[0]
-                                val val1 = ints.getOrNull(1) // Value often in index 1
+                                val val1 = ints.getOrNull(1)
                                 
                                 when (cmdId) {
                                     C_FREQ -> { // 13
@@ -157,7 +150,6 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
                                             onRegionChanged?.invoke(regionEnum)
                                         }
                                     }
-                                    // Add other parses here as discovered (e.g. RDS)
                                 }
                             }
                         }
@@ -165,6 +157,76 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
                 }
             }
         }
+    }
+
+    // --- Audio Focus & Service Connection (No changes) ---
+
+    // ... (Dependencies and Startup) ...
+
+    private fun registerRadioTransport() {
+        val actions = listOf(
+            "com.syu.radio.attach",
+            "com.syu.radio.start",
+            "com.syu.radio.takeover",
+            "com.syu.radio.init" // Added initialization signal
+        )
+        
+        actions.forEach { action ->
+            try {
+                val intent = Intent(action)
+                intent.setPackage("com.syu.ms")
+                context.sendBroadcast(intent)
+                log("Handshake: $action")
+            } catch (e: Exception) { }
+        }
+    }
+
+    // --- RadioBackend methods ---
+
+    override fun tuneTo(freq: Int) {
+        log("tuneTo($freq)")
+        sendCmdC(C_FREQ, FREQ_DIRECT, freq, 0)
+        handler.postDelayed({ claimRadioAudioSession() }, 250)
+    }
+
+    override fun tuneStepUp() {
+        log("tuneStepUp -> C_FREQ STEP +1")
+        sendCmdC(C_FREQ, FREQ_BY_STEP, 1, 0)
+        handler.postDelayed({ claimRadioAudioSession() }, 250)
+    }
+
+    override fun tuneStepDown() {
+        log("tuneStepDown -> C_FREQ STEP -1")
+        sendCmdC(C_FREQ, FREQ_BY_STEP, -1, 0)
+        handler.postDelayed({ claimRadioAudioSession() }, 250)
+    }
+
+    override fun seekUp() {
+        log("seekUp -> U_SEARCH_STATE FORE")
+        sendCmdU(U_SEARCH_STATE, SEARCH_FORE)
+        handler.postDelayed({ claimRadioAudioSession() }, 250)
+    }
+
+    override fun seekDown() {
+        log("seekDown -> U_SEARCH_STATE BACK")
+        sendCmdU(U_SEARCH_STATE, SEARCH_BACK)
+        handler.postDelayed({ claimRadioAudioSession() }, 250)
+    }
+
+    override fun stopSeek() {
+        log("stopSeek -> C_SCAN (Toggle)")
+        sendCmdC(C_SCAN) // Safer stop than U_SEARCH_STATE on some FWs
+    }
+
+    override fun startScan() {
+        log("startScan()")
+        sendCmdC(C_SCAN)
+        handler.postDelayed({ claimRadioAudioSession() }, 250)
+    }
+
+    override fun stopScan() {
+        log("stopScan()")
+        stopSeek() 
     }
 
     // --- Audio Focus ---
@@ -262,7 +324,8 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         // Initial Startup Delay to let service stabilize
         handler.postDelayed({
             setSource(APP_ID_RADIO)
-            claimRadioAudioSession() // [1] Claim immediately after source switch
+            claimRadioAudioSession() // [1] Audio Focus
+            registerRadioTransport() // [2] Transport Ownership (The missing link)
             
             // Handshake/Init
             setRegion(RadioRegion.USA)
@@ -278,11 +341,32 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
             // Second Stage: Tune and Re-Claim
             handler.postDelayed({
                 tuneTo(10470) // Force initial tune to known good freq (104.7)
-                claimRadioAudioSession() // [2] Re-claim after tune to lock audio
+                claimRadioAudioSession() // [3] Re-claim after tune to lock audio
                 stopSeek() 
             }, 500)
             
         }, 300)
+    }
+
+    private fun registerRadioTransport() {
+        // Required for FYT/ATOTO to "attach" the tuner to this app
+        // sending all common variants to cover different firmwares
+        val actions = listOf(
+            "com.syu.radio.attach",
+            "com.syu.radio.start",
+            "com.syu.radio.takeover" // Common on newer UIS7862
+        )
+        
+        actions.forEach { action ->
+            try {
+                val intent = Intent(action)
+                intent.setPackage("com.syu.ms") // Target the backend service
+                context.sendBroadcast(intent)
+                log("Sent Transport Handshake: $action")
+            } catch (e: Exception) {
+                log("Failed to send $action: ${e.message}")
+            }
+        }
     }
 
     private fun claimRadioAudioSession() {
