@@ -23,6 +23,16 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Initialize Views FIRST (Before any logging or status updates)
+        statusText = findViewById(R.id.tv_status)
+        logText = findViewById(R.id.tv_log)
+        logText.movementMethod = ScrollingMovementMethod()
+
+        val btnNext = findViewById<Button>(R.id.btn_next)
+        val btnPrev = findViewById<Button>(R.id.btn_prev)
+        val btnSeekUp = findViewById<Button>(R.id.btn_seek_up)
+        val btnSeekDown = findViewById<Button>(R.id.btn_seek_down)
+
         // Initialize Backend (FORCE FYT for troubleshooting)
         // backend = RadioBackendFactory.create(this)
         backend = FytAtotoBackend(this)
@@ -57,16 +67,6 @@ class MainActivity : AppCompatActivity() {
         backend.onBandChanged = { band ->
             runOnUiThread { updateStatus("Current Band: $band") }
         }
-        
-        // Initialize Views FIRST
-        statusText = findViewById(R.id.tv_status)
-        logText = findViewById(R.id.tv_log)
-        logText.movementMethod = ScrollingMovementMethod()
-
-        val btnNext = findViewById<Button>(R.id.btn_next)
-        val btnPrev = findViewById<Button>(R.id.btn_prev)
-        val btnSeekUp = findViewById<Button>(R.id.btn_seek_up)
-        val btnSeekDown = findViewById<Button>(R.id.btn_seek_down)
 
         // --- Configured with Backend Calls ---
         btnNext.setOnClickListener {

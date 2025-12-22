@@ -102,6 +102,7 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
             handler.post {
                 when (updateCode) {
+                    // Standard FYT codes (keep just in case)
                     G_FREQ -> {
                         val freq = ints?.getOrNull(0) ?: return@post
                         log("G_FREQ -> $freq")
@@ -115,17 +116,41 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
                     }
                     G_AREA -> {
                         val areaInt = ints?.getOrNull(0) ?: return@post
-                        val regionEnum = when (areaInt) {
-                            AREA_USA    -> RadioRegion.USA
-                            AREA_EUROPE -> RadioRegion.EUROPE
-                            AREA_LATIN  -> RadioRegion.LATIN
-                            AREA_JAPAN  -> RadioRegion.JAPAN
-                            AREA_OIRT   -> RadioRegion.OIRT
-                            AREA_CHINA  -> RadioRegion.CHINA
-                            else        -> RadioRegion.USA
-                        }
+                        val regionEnum = mapRegionIntToEnum(areaInt)
                         log("G_AREA -> $areaInt ($regionEnum)")
                         onRegionChanged?.invoke(regionEnum)
+                    }
+                    
+                    // ATOTO Multiplexed Code (The real data source)
+                    28 -> { 
+                        if (ints != null && ints.isNotEmpty()) {
+                            val cmdId = ints[0]
+                            val val1 = ints.getOrNull(1) // Value often in index 1
+                            
+                            when (cmdId) {
+                                C_FREQ -> { // 13
+                                    if (val1 != null) {
+                                        log("Parsed FREQ from code 28 -> $val1")
+                                        onFrequencyChanged?.invoke(val1)
+                                    }
+                                }
+                                C_BAND -> { // 11
+                                    if (val1 != null) {
+                                        val bandEnum = mapBandIntToEnum(val1)
+                                        log("Parsed BAND from code 28 -> $val1 ($bandEnum)")
+                                        onBandChanged?.invoke(bandEnum)
+                                    }
+                                }
+                                C_AREA -> { // 12
+                                    if (val1 != null) {
+                                        val regionEnum = mapRegionIntToEnum(val1)
+                                        log("Parsed AREA from code 28 -> $val1 ($regionEnum)")
+                                        onRegionChanged?.invoke(regionEnum)
+                                    }
+                                }
+                                // Add other parses here as discovered (e.g. RDS)
+                            }
+                        }
                     }
                 }
             }
@@ -225,6 +250,14 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         log("Initializing Radio module...")
         setSource(APP_ID_RADIO)
         log("Requested App ID $APP_ID_RADIO (Radio)")
+
+        // Required Broadcasts (User noted these are mandatory for MCU responsiveness)
+        try {
+            log("Sending com.syu.radio.Launch broadcast...")
+            context.sendBroadcast(Intent("com.syu.radio.Launch"))
+        } catch(e: Exception) {
+            log("Failed to send Launch broadcast: ${e.message}")
+        }
 
         // Handshake/Init
         setRegion(RadioRegion.USA)
@@ -400,6 +433,17 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
             RadioBand.FM3 -> 2
             RadioBand.AM1 -> 3
             RadioBand.AM2 -> 4
+        }
+
+    private fun mapRegionIntToEnum(region: Int): RadioRegion =
+        when (region) {
+            AREA_USA    -> RadioRegion.USA
+            AREA_EUROPE -> RadioRegion.EUROPE
+            AREA_LATIN  -> RadioRegion.LATIN
+            AREA_JAPAN  -> RadioRegion.JAPAN
+            AREA_OIRT   -> RadioRegion.OIRT
+            AREA_CHINA  -> RadioRegion.CHINA
+            else        -> RadioRegion.USA
         }
 
     private fun mapRegionEnumToInt(region: RadioRegion): Int =
