@@ -210,7 +210,7 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         }
     }
     
-    private fun setSource(appId: Int) {
+    fun setSource(appId: Int) {
         if (remoteMain != null) {
              try {
                  remoteMain?.cmd(0, intArrayOf(appId), null, null)

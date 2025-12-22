@@ -79,14 +79,18 @@ class MainActivity : AppCompatActivity() {
         }
         // Other debug buttons might need specific backend extensions or be removed/stubbed 
         findViewById<Button>(R.id.btn_debug_src11).setOnClickListener { 
-             appendLog("Src 11 not directly supported in generic API")
+             if (backend is FytAtotoBackend) {
+                 (backend as FytAtotoBackend).setSource(11) // Mute/Aux
+                 updateStatus("Debug: Force App ID 11")
+             }
         }
         findViewById<Button>(R.id.btn_debug_hide).setOnClickListener { 
-             // Logic moved to backend start/stop or requires explicit 'hide' method if universal
-             appendLog("Hide Intent sent implicitly by backend or removed")
+             sendBroadcast(Intent("android.fyt.action.HIDE"))
+             updateStatus("Debug: Sent HIDE")
         }
         findViewById<Button>(R.id.btn_debug_show).setOnClickListener { 
-             appendLog("Show Intent not exposed in generic API")
+             sendBroadcast(Intent("android.fyt.action.SHOW"))
+             updateStatus("Debug: Sent SHOW")
         }
         findViewById<Button>(R.id.btn_debug_995).setOnClickListener { 
             backend.tuneTo(10470) // Direct Tune to 104.7 MHz
