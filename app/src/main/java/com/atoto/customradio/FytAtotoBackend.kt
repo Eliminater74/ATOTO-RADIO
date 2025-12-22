@@ -71,8 +71,12 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         const val U_SEARCH_STATE = 22
         
         // --- Constants ---
-        const val FREQ_DIRECT = 1
+        const val FREQ_BY_STEP  = 0
+        const val FREQ_DIRECT   = 1
+        
         const val SEARCH_STATE_NONE = 0
+        const val SEARCH_FORE       = 2
+        const val SEARCH_BACK       = 3
         
         const val AREA_USA    = 0
         const val AREA_LATIN  = 1
@@ -124,31 +128,37 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
                     // ATOTO Multiplexed Code (The real data source)
                     28 -> { 
                         if (ints != null && ints.isNotEmpty()) {
-                            val cmdId = ints[0]
-                            val val1 = ints.getOrNull(1) // Value often in index 1
-                            
-                            when (cmdId) {
-                                C_FREQ -> { // 13
-                                    if (val1 != null) {
-                                        log("Parsed FREQ from code 28 -> $val1")
-                                        onFrequencyChanged?.invoke(val1)
+                            // If size is 1, it's just an ACK for the command
+                            if (ints.size == 1) {
+                                log("MCU ACK (28) -> Cmd: ${ints[0]}")
+                            } else {
+                                // If size >= 2, it contains data: [CmdID, Value, ...]
+                                val cmdId = ints[0]
+                                val val1 = ints.getOrNull(1) // Value often in index 1
+                                
+                                when (cmdId) {
+                                    C_FREQ -> { // 13
+                                        if (val1 != null) {
+                                            log("Parsed FREQ from code 28 -> $val1")
+                                            onFrequencyChanged?.invoke(val1)
+                                        }
                                     }
-                                }
-                                C_BAND -> { // 11
-                                    if (val1 != null) {
-                                        val bandEnum = mapBandIntToEnum(val1)
-                                        log("Parsed BAND from code 28 -> $val1 ($bandEnum)")
-                                        onBandChanged?.invoke(bandEnum)
+                                    C_BAND -> { // 11
+                                        if (val1 != null) {
+                                            val bandEnum = mapBandIntToEnum(val1)
+                                            log("Parsed BAND from code 28 -> $val1 ($bandEnum)")
+                                            onBandChanged?.invoke(bandEnum)
+                                        }
                                     }
-                                }
-                                C_AREA -> { // 12
-                                    if (val1 != null) {
-                                        val regionEnum = mapRegionIntToEnum(val1)
-                                        log("Parsed AREA from code 28 -> $val1 ($regionEnum)")
-                                        onRegionChanged?.invoke(regionEnum)
+                                    C_AREA -> { // 12
+                                        if (val1 != null) {
+                                            val regionEnum = mapRegionIntToEnum(val1)
+                                            log("Parsed AREA from code 28 -> $val1 ($regionEnum)")
+                                            onRegionChanged?.invoke(regionEnum)
+                                        }
                                     }
+                                    // Add other parses here as discovered (e.g. RDS)
                                 }
-                                // Add other parses here as discovered (e.g. RDS)
                             }
                         }
                     }
@@ -343,28 +353,30 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     override fun tuneStepUp() {
-        log("tuneStepUp()")
-        sendCmdC(C_FREQ_UP)
+        log("tuneStepUp -> C_FREQ STEP +1")
+        // C_FREQ (13), mode=STEP(0), step=+1, unused=0
+        sendCmdC(C_FREQ, FREQ_BY_STEP, 1, 0)
     }
 
     override fun tuneStepDown() {
-        log("tuneStepDown()")
-        sendCmdC(C_FREQ_DOWN)
+        log("tuneStepDown -> C_FREQ STEP -1")
+        // C_FREQ (13), mode=STEP(0), step=-1, unused=0
+        sendCmdC(C_FREQ, FREQ_BY_STEP, -1, 0)
     }
 
     override fun seekUp() {
-        log("seekUp()")
-        sendCmdC(C_SEEK_UP)
+        log("seekUp -> U_SEARCH_STATE FORE")
+        sendCmdU(U_SEARCH_STATE, SEARCH_FORE)
     }
 
     override fun seekDown() {
-        log("seekDown()")
-        sendCmdC(C_SEEK_DOWN)
+        log("seekDown -> U_SEARCH_STATE BACK")
+        sendCmdU(U_SEARCH_STATE, SEARCH_BACK)
     }
 
     override fun stopSeek() {
-        log("stopSeek()")
-        sendCmdU(U_SEARCH_STATE, SEARCH_STATE_NONE)
+        log("stopSeek -> U_SEARCH_STATE STOP")
+        sendCmdU(U_SEARCH_STATE, SEARCH_STOP)
     }
 
     override fun startScan() {
@@ -374,7 +386,7 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     override fun stopScan() {
         log("stopScan()")
-        stopSeek() // Or C_SCAN again depending on FW
+        stopSeek() 
     }
 
     override fun setBand(band: RadioBand) {
