@@ -16,35 +16,30 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var statusText: TextView
     private lateinit var logText: TextView
-    private lateinit var radioManager: RadioManager
+    private lateinit var backend: RadioBackend
     private val snifferReceiver = RadioSniffer()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        radioManager = RadioManager(this)
+        // Initialize Backend
+        backend = RadioBackendFactory.create(this)
         
-        // --- Connect MCU Callbacks to UI ---
-        radioManager.logCallback = { msg ->
-            runOnUiThread { appendLog(msg) }
-        }
-        
-        val frequencyText = findViewById<TextView>(R.id.tv_frequency)
-        
-        radioManager.onFreqChange = { freq ->
+        // --- Connect Backend Signals to UI ---
+        backend.onFrequencyChanged = { freq ->
             // freq is in 10kHz units for FM (e.g. 10170 = 101.7 MHz)
             val displayFreq = freq / 100.0
-            frequencyText.text = "%.1f MHz".format(displayFreq)
+            runOnUiThread {
+                findViewById<TextView>(R.id.tv_frequency).text = "%.1f MHz".format(displayFreq)
+            }
         }
         
-        radioManager.onBandChange = { band ->
-            updateStatus("Current Band: $band")
+        backend.onBandChanged = { band ->
+            runOnUiThread { updateStatus("Current Band: $band") }
         }
         
         // Initialize Views FIRST
-
-
         statusText = findViewById(R.id.tv_status)
         logText = findViewById(R.id.tv_log)
         logText.movementMethod = ScrollingMovementMethod()
@@ -54,56 +49,59 @@ class MainActivity : AppCompatActivity() {
         val btnSeekUp = findViewById<Button>(R.id.btn_seek_up)
         val btnSeekDown = findViewById<Button>(R.id.btn_seek_down)
 
-        var currentFreq = 101.5
-
-        // --- Configured with Correct C_ Codes ---
+        // --- Configured with Backend Calls ---
         btnNext.setOnClickListener {
             updateStatus("Action: Tune Up")
-            radioManager.tuneUp()
+            backend.tuneStepUp()
         }
 
         btnPrev.setOnClickListener {
             updateStatus("Action: Tune Down")
-            radioManager.tuneDown()
+            backend.tuneStepDown()
         }
         
         btnSeekUp.setOnClickListener {
             updateStatus("Action: Seek Up")
-            radioManager.seekUp() 
+            backend.seekUp() 
         }
         
         btnSeekDown.setOnClickListener {
             updateStatus("Action: Seek Down")
-            radioManager.seekDown() 
+            backend.seekDown() 
         }
         
-        // --- Debug Controls Wiring (Restored) ---
+        // --- Debug Controls Wiring ---
         findViewById<Button>(R.id.btn_debug_src1).setOnClickListener { 
-            radioManager.setSource(1) 
+            // In universal backend, we typically don't expose raw ID source switching freely, 
+            // but for debug we might re-impl or assume backend handles it.
+            updateStatus("Debug: Backend Start (Set Source)")
+            backend.start()
         }
+        // Other debug buttons might need specific backend extensions or be removed/stubbed 
         findViewById<Button>(R.id.btn_debug_src11).setOnClickListener { 
-            radioManager.setSource(11) 
+             appendLog("Src 11 not directly supported in generic API")
         }
         findViewById<Button>(R.id.btn_debug_hide).setOnClickListener { 
-            radioManager.sendFytIntent("android.fyt.action.HIDE") 
+             // Logic moved to backend start/stop or requires explicit 'hide' method if universal
+             appendLog("Hide Intent sent implicitly by backend or removed")
         }
         findViewById<Button>(R.id.btn_debug_show).setOnClickListener { 
-            radioManager.sendFytIntent("android.fyt.action.SHOW") 
+             appendLog("Show Intent not exposed in generic API")
         }
         findViewById<Button>(R.id.btn_debug_995).setOnClickListener { 
-            radioManager.tuneTo(10470) // Direct Tune to 104.7 MHz (Q105)
+            backend.tuneTo(10470) // Direct Tune to 104.7 MHz
         }
 
         // Start Sniffer for debugging
         registerSniffer()
         
-        // Try to wake up hardware on launch (Moved after View Init to prevent Crash)
-        radioManager.startRadio()
+        // Start the Backend (Connects to service, initializes radio)
+        backend.start()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        radioManager.stopRadio()
+        backend.stop()
         unregisterReceiver(snifferReceiver)
     }
 
@@ -113,11 +111,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun registerSniffer() {
         val filter = IntentFilter()
-        // Listen for everything that might be relevant
         filter.addAction("com.syu.radio.next")
-        filter.addAction("com.syu.radio.update") // Hypothetical
-        filter.addAction("com.microntek.radio.next") // Just in case
-        // Add more wildcards if possible (not possible with standard Manifest, must be specific)
+        filter.addAction("com.syu.radio.update")
         registerReceiver(snifferReceiver, filter)
         appendLog("Sniffer started...")
     }
@@ -130,7 +125,6 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             intent?.let {
                 val action = it.action
-                // Log content
                 val logMsg = "RX: $action"
                 Log.d("RadioSniffer", logMsg)
                 appendLog(logMsg)
