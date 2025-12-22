@@ -23,10 +23,29 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Initialize Backend
-        backend = RadioBackendFactory.create(this)
+        // Initialize Backend (FORCE FYT for troubleshooting)
+        // backend = RadioBackendFactory.create(this)
+        backend = FytAtotoBackend(this)
+        
+        updateStatus("Backend: ${backend.javaClass.simpleName} (Connecting...)")
         
         // --- Connect Backend Signals to UI ---
+        // Add a simple callback for connection state if we can add it to Interface later, 
+        // for now relies on side-effect logs or we can hack it:
+        if (backend is FytAtotoBackend) {
+             val fytBackend = backend as FytAtotoBackend
+             fytBackend.onConnectionStateChange = { isConnected ->
+                 runOnUiThread {
+                     val state = if(isConnected) "Connected" else "Disconnected"
+                     findViewById<TextView>(R.id.tv_status).append("\nIPC: $state")
+                 }
+             }
+             // Wiring the new Debug Logger
+             fytBackend.debugLog = { msg ->
+                 runOnUiThread { appendLog(msg) }
+             }
+        }
+
         backend.onFrequencyChanged = { freq ->
             // freq is in 10kHz units for FM (e.g. 10170 = 101.7 MHz)
             val displayFreq = freq / 100.0

@@ -16,7 +16,7 @@ import com.syu.ipc.IRemoteToolkit
 
 class FytAtotoBackend(private val context: Context) : RadioBackend {
 
-    // --- Callbacks ---
+    // --- Callbacks to UI ---
     override var onFrequencyChanged: ((Int) -> Unit)? = null
     override var onBandChanged: ((RadioBand) -> Unit)? = null
     override var onRegionChanged: ((RadioRegion) -> Unit)? = null
@@ -24,7 +24,17 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     override var onStationNameChanged: ((String) -> Unit)? = null
     override var onSearchStateChanged: ((SearchState) -> Unit)? = null
 
-    // --- Configuration / State ---
+    // --- Debug log callback (for MainActivity.tv_log) ---
+    var debugLog: ((String) -> Unit)? = null
+    
+    // Connection State Callback (added for UI feedback)
+    var onConnectionStateChange: ((Boolean) -> Unit)? = null
+
+    private fun log(msg: String) {
+        Log.d(TAG, msg)
+        debugLog?.invoke(msg)
+    }
+
     companion object {
         const val TAG = "FytAtotoBackend"
 
@@ -86,15 +96,36 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     // --- MCU Callback Implementation ---
     private val moduleCallback = object : IModuleCallback.Stub() {
         override fun update(updateCode: Int, ints: IntArray?, floats: FloatArray?, strs: Array<String>?) {
+            val intsStr = ints?.joinToString() ?: "null"
+            val logMsg = "MCU update: code=$updateCode ints=[$intsStr]"
+            log(logMsg)
+
             handler.post {
                 when (updateCode) {
                     G_FREQ -> {
                         val freq = ints?.getOrNull(0) ?: return@post
+                        log("G_FREQ -> $freq")
                         onFrequencyChanged?.invoke(freq)
                     }
                     G_BAND -> {
-                        val band = ints?.getOrNull(0) ?: return@post
-                        onBandChanged?.invoke(mapBandIntToEnum(band))
+                        val bandInt = ints?.getOrNull(0) ?: return@post
+                        val bandEnum = mapBandIntToEnum(bandInt)
+                        log("G_BAND -> $bandInt ($bandEnum)")
+                        onBandChanged?.invoke(bandEnum)
+                    }
+                    G_AREA -> {
+                        val areaInt = ints?.getOrNull(0) ?: return@post
+                        val regionEnum = when (areaInt) {
+                            AREA_USA    -> RadioRegion.USA
+                            AREA_EUROPE -> RadioRegion.EUROPE
+                            AREA_LATIN  -> RadioRegion.LATIN
+                            AREA_JAPAN  -> RadioRegion.JAPAN
+                            AREA_OIRT   -> RadioRegion.OIRT
+                            AREA_CHINA  -> RadioRegion.CHINA
+                            else        -> RadioRegion.USA
+                        }
+                        log("G_AREA -> $areaInt ($regionEnum)")
+                        onRegionChanged?.invoke(regionEnum)
                     }
                 }
             }
@@ -103,22 +134,26 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     // --- Audio Focus ---
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
-        Log.d(TAG, "Audio Focus Change: $focusChange")
+        log("Audio Focus Change: $focusChange")
     }
 
     // --- Service Connection ---
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            Log.d(TAG, "Connected to Toolkit Service")
+            log("Connected to Toolkit Service: $name")
             try {
                 remoteToolkit = IRemoteToolkit.Stub.asInterface(service)
                 remoteModule = remoteToolkit?.getRemoteModule(MODULE_RADIO)
                 remoteMain = remoteToolkit?.getRemoteModule(MODULE_MAIN)
                 
+                log("Modules acquired: Radio=$remoteModule Main=$remoteMain")
+                onConnectionStateChange?.invoke(true)
+                
                 // Register Callbacks
                 for (i in 0..100) {
                     remoteModule?.register(moduleCallback, i, 1)
                 }
+                log("Callbacks registered 0..100")
 
                 // Initialize
                 requestRadioFocus()
@@ -126,37 +161,43 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
                 
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to get Modules", e)
+                debugLog?.invoke("Error: ${e.message}")
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            Log.d(TAG, "Service Disconnected")
+            log("Service Disconnected: $name")
+            onConnectionStateChange?.invoke(false)
             remoteToolkit = null
             remoteModule = null
             remoteMain = null
         }
     }
 
+    // --- RadioBackend implementation ---
+
     override fun start() {
-        Log.d(TAG, "Starting Backend...")
+        log("Starting Backend (binding to com.syu.ms.toolkit)...")
         try {
             val intent = Intent("com.syu.ms.toolkit")
             intent.setPackage("com.syu.ms")
-            context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            val bound = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            log("bindService result = $bound")
             context.sendBroadcast(Intent("android.fyt.action.HIDE"))
         } catch (e: Exception) {
             Log.e(TAG, "Failed to bind", e)
+            debugLog?.invoke("Bind Failed: ${e.message}")
         }
     }
 
     override fun stop() {
-        Log.d(TAG, "Stopping Backend...")
+        log("Stopping Backend...")
         // Unregister callbacks
         if (remoteModule != null) {
             for (i in 0..100) {
                 try {
                     remoteModule?.unregister(moduleCallback, i)
-                } catch (e: Exception) {}
+                } catch (e: Exception) { }
             }
         }
         
@@ -170,7 +211,9 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         
         try {
             context.unbindService(connection)
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.e(TAG, "Unbind failed", e)
+        }
         
         remoteToolkit = null
         remoteModule = null
@@ -179,16 +222,20 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     // --- Core Logic ---
     private fun initializeRadio() {
+        log("Initializing Radio module...")
         setSource(APP_ID_RADIO)
+        log("Requested App ID $APP_ID_RADIO (Radio)")
+
         // Handshake/Init
         setRegion(RadioRegion.USA)
         setBand(RadioBand.FM1)
-        sendCmdC(C_STEREO, 0)
-        sendCmdC(C_LOC, 0)
+        setStereoMode(StereoMode.AUTO)
+        setLocalDx(false)
         stopSeek()
     }
     
     private fun requestRadioFocus() {
+        log("Requesting Audio Focus...")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(AudioAttributes.Builder()
@@ -213,80 +260,110 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     fun setSource(appId: Int) {
         if (remoteMain != null) {
              try {
+                 log("Sending source switch to appId=$appId")
                  remoteMain?.cmd(0, intArrayOf(appId), null, null)
-             } catch(e: Exception) {}
+             } catch(e: Exception) {
+                 Log.e(TAG, "Source switch failed", e)
+                 debugLog?.invoke("Source switch error: ${e.message}")
+             }
+        } else {
+             log("Main module not connected (source switch ignored)")
         }
     }
 
     // --- Helpers ---
     private fun sendCmdC(cKey: Int, vararg params: Int) {
-        if (remoteModule == null) return
+        if (remoteModule == null) {
+            log("sendCmdC($cKey, ${params.joinToString()}) -> remoteModule is null")
+            return
+        }
         try {
             val ints = if (params.isNotEmpty()) params else null
+            log("CMD C_$cKey params=${params.joinToString()}")
             remoteModule?.cmd(cKey, ints, null, null)
-            Log.d(TAG, "Sent CMD C_$cKey params=${params.joinToString()}")
         } catch (e: Exception) {
             Log.e(TAG, "Remote C_* Call Failed", e)
+            debugLog?.invoke("C_$cKey error: ${e.message}")
         }
     }
 
     private fun sendCmdU(uKey: Int, vararg params: Int) {
-        if (remoteModule == null) return
+        if (remoteModule == null) {
+            log("sendCmdU($uKey, ${params.joinToString()}) -> remoteModule is null")
+            return
+        }
         try {
             val ints = if (params.isNotEmpty()) params else null
+            log("CMD U_$uKey params=${params.joinToString()}")
             remoteModule?.cmd(uKey, ints, null, null)
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            debugLog?.invoke("U_$uKey error: ${e.message}")
+        }
     }
 
-    // --- Interface Implementation ---
+    // --- RadioBackend methods ---
 
     override fun tuneTo(freq: Int) {
         // [FREQ_DIRECT, freq, 0]
+        log("tuneTo($freq)")
         sendCmdC(C_FREQ, FREQ_DIRECT, freq, 0)
     }
 
     override fun tuneStepUp() {
+        log("tuneStepUp()")
         sendCmdC(C_FREQ_UP)
     }
 
     override fun tuneStepDown() {
+        log("tuneStepDown()")
         sendCmdC(C_FREQ_DOWN)
     }
 
     override fun seekUp() {
+        log("seekUp()")
         sendCmdC(C_SEEK_UP)
     }
 
     override fun seekDown() {
+        log("seekDown()")
         sendCmdC(C_SEEK_DOWN)
     }
 
     override fun stopSeek() {
+        log("stopSeek()")
         sendCmdU(U_SEARCH_STATE, SEARCH_STATE_NONE)
     }
 
     override fun startScan() {
+        log("startScan()")
         sendCmdC(C_SCAN)
     }
 
     override fun stopScan() {
-        stopSeek() // Or C_SCAN again
+        log("stopScan()")
+        stopSeek() // Or C_SCAN again depending on FW
     }
 
     override fun setBand(band: RadioBand) {
-        sendCmdC(C_BAND, mapBandEnumToInt(band))
+        val id = mapBandEnumToInt(band)
+        log("setBand($band) -> id=$id")
+        sendCmdC(C_BAND, id)
     }
 
     override fun setRegion(region: RadioRegion) {
-        sendCmdC(C_AREA, mapRegionEnumToInt(region))
+        val area = mapRegionEnumToInt(region)
+        log("setRegion($region) -> area=$area")
+        sendCmdC(C_AREA, area)
     }
 
     override fun selectPreset(index: Int) {
-         sendCmdC(C_SELECT_CHANNEL, index)
+        log("selectPreset($index)")
+        sendCmdC(C_SELECT_CHANNEL, index)
     }
 
     override fun savePreset(index: Int) {
-         sendCmdC(C_SAVE_CHANNEL, index)
+        log("savePreset($index)")
+        sendCmdC(C_SAVE_CHANNEL, index)
     }
 
     override fun setStereoMode(mode: StereoMode) {
@@ -295,11 +372,14 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
             StereoMode.MONO -> 1
             StereoMode.STEREO -> 2
         }
+        log("setStereoMode($mode) -> $valInt")
         sendCmdC(C_STEREO, valInt)
     }
 
     override fun setLocalDx(isLocal: Boolean) {
-        sendCmdC(C_LOC, if(isLocal) 1 else 0)
+        val v = if (isLocal) 1 else 0
+        log("setLocalDx($isLocal) -> $v")
+        sendCmdC(C_LOC, v)
     }
     
     // --- Mappers ---
