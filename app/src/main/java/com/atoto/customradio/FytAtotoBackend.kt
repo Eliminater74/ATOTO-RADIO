@@ -10,6 +10,8 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.os.Handler
+import android.os.Looper
 import com.syu.ipc.IModuleCallback
 import com.syu.ipc.IRemoteModule
 import com.syu.ipc.IRemoteToolkit
@@ -89,6 +91,15 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
     
     private var currentFreq: Int = 8790 // Default fallback
+    
+    // --- System & IPC Properties ---
+    private val handler = Handler(Looper.getMainLooper())
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private var audioFocusRequest: AudioFocusRequest? = null
+    
+    private var remoteToolkit: IRemoteToolkit? = null
+    private var remoteModule: IRemoteModule? = null
+    private var remoteMain: IRemoteModule? = null
 
 // ...(keep existing callbacks)...
 
@@ -161,73 +172,43 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     // --- Audio Focus & Service Connection (No changes) ---
 
-    // ... (Dependencies and Startup) ...
+    // --- Audio Focus & Service Connection ---
 
-    private fun registerRadioTransport() {
-        val actions = listOf(
-            "com.syu.radio.attach",
-            "com.syu.radio.start",
-            "com.syu.radio.takeover",
-            "com.syu.radio.init" // Added initialization signal
-        )
-        
-        actions.forEach { action ->
-            try {
-                val intent = Intent(action)
-                intent.setPackage("com.syu.ms")
-                context.sendBroadcast(intent)
-                log("Handshake: $action")
-            } catch (e: Exception) { }
+
+
+    private fun startKeepAliveService() {
+        try {
+            val intent = Intent()
+            intent.component = ComponentName("com.syu.radio", "com.navimods.radio.RadioService") // Try NavRadio+ package first if installed? No, spoof stock.
+            // Actually, NavRadio+ keeps specific service alive. Let's try to start the stock one if we can, or just broadcast Logger.
+            // NavRadio+ code: intent.setAction("com.syu.radio.Logger"); intent.setPackage("com.syu.radio");
+            
+            val intentLogger = Intent("com.syu.radio.Logger")
+            intentLogger.setPackage("com.syu.radio")
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intentLogger)
+            } else {
+                context.startService(intentLogger)
+            }
+            log("Started Keep-Alive Service (com.syu.radio.Logger)")
+        } catch (e: Exception) {
+            log("Failed to start Keep-Alive Service: ${e.message}")
         }
     }
 
-    // --- RadioBackend methods ---
-
-    override fun tuneTo(freq: Int) {
-        log("tuneTo($freq)")
-        sendCmdC(C_FREQ, FREQ_DIRECT, freq, 0)
-        handler.postDelayed({ claimRadioAudioSession() }, 250)
+    private fun sendRadioData(stereo: Boolean) {
+        try {
+            val intent = Intent("com.syu.radio.data")
+            intent.putExtra("st", stereo)
+            context.sendBroadcast(intent)
+            log("Sent Radio Data (com.syu.radio.data, st=$stereo)")
+        } catch (e: Exception) {
+            log("Failed to send radio data: ${e.message}")
+        }
     }
 
-    override fun tuneStepUp() {
-        log("tuneStepUp -> C_FREQ STEP +1")
-        sendCmdC(C_FREQ, FREQ_BY_STEP, 1, 0)
-        handler.postDelayed({ claimRadioAudioSession() }, 250)
-    }
 
-    override fun tuneStepDown() {
-        log("tuneStepDown -> C_FREQ STEP -1")
-        sendCmdC(C_FREQ, FREQ_BY_STEP, -1, 0)
-        handler.postDelayed({ claimRadioAudioSession() }, 250)
-    }
-
-    override fun seekUp() {
-        log("seekUp -> U_SEARCH_STATE FORE")
-        sendCmdU(U_SEARCH_STATE, SEARCH_FORE)
-        handler.postDelayed({ claimRadioAudioSession() }, 250)
-    }
-
-    override fun seekDown() {
-        log("seekDown -> U_SEARCH_STATE BACK")
-        sendCmdU(U_SEARCH_STATE, SEARCH_BACK)
-        handler.postDelayed({ claimRadioAudioSession() }, 250)
-    }
-
-    override fun stopSeek() {
-        log("stopSeek -> C_SCAN (Toggle)")
-        sendCmdC(C_SCAN) // Safer stop than U_SEARCH_STATE on some FWs
-    }
-
-    override fun startScan() {
-        log("startScan()")
-        sendCmdC(C_SCAN)
-        handler.postDelayed({ claimRadioAudioSession() }, 250)
-    }
-
-    override fun stopScan() {
-        log("stopScan()")
-        stopSeek() 
-    }
 
     // --- Audio Focus ---
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
@@ -324,8 +305,13 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         // Initial Startup Delay to let service stabilize
         handler.postDelayed({
             setSource(APP_ID_RADIO)
-            claimRadioAudioSession() // [1] Audio Focus
-            registerRadioTransport() // [2] Transport Ownership (The missing link)
+            
+            // [1] Keep Alive Strategy (Spoofing)
+            startKeepAliveService()
+            
+            // [2] Audio Focus & Transport
+            claimRadioAudioSession() 
+            registerRadioTransport() 
             
             // Handshake/Init
             setRegion(RadioRegion.USA)
@@ -341,7 +327,8 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
             // Second Stage: Tune and Re-Claim
             handler.postDelayed({
                 tuneTo(10470) // Force initial tune to known good freq (104.7)
-                claimRadioAudioSession() // [3] Re-claim after tune to lock audio
+                claimRadioAudioSession()
+                sendRadioData(true) // Broadcast status
                 stopSeek() 
             }, 500)
             
@@ -354,7 +341,8 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         val actions = listOf(
             "com.syu.radio.attach",
             "com.syu.radio.start",
-            "com.syu.radio.takeover" // Common on newer UIS7862
+            "com.syu.radio.takeover", // Common on newer UIS7862
+            "com.syu.radio.init"      // Critical for claiming ownership
         )
         
         actions.forEach { action ->
