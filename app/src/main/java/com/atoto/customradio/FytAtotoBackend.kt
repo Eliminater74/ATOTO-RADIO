@@ -51,6 +51,7 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         
         // --- C_* Command Codes (App -> MCU) ---
         const val C_NEXT_CHANNEL      = 0
+        const val C_RADIO_POWER       = 1  // Power on/off radio tuner
         const val C_PREV_CHANNEL      = 1
         const val C_SOURCE            = 2
         const val C_FREQ_UP           = 3
@@ -230,6 +231,37 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         }
     }
 
+    private fun powerOnRadioTuner() {
+        log("*** POWERING ON RADIO TUNER (Multiple Methods) ***")
+        
+        // Method 1: Direct power command
+        sendCmdC(C_RADIO_POWER, 1)  // C_RADIO_POWER ON
+        Thread.sleep(50)
+        
+        // Method 2: Init command (some units)
+        sendCmdC(20, 1) // C_RADIO_INIT
+        Thread.sleep(50)
+        
+        // Method 3: Via broadcast
+        try {
+            val intent = Intent("com.syu.radio.power")
+            intent.putExtra("enable", true)
+            context.sendBroadcast(intent)
+            log("Sent radio power broadcast")
+        } catch (e: Exception) {
+            log("Power broadcast failed: ${e.message}")
+        }
+        
+        // Method 4: Direct module command (alternative codes)
+        try {
+            remoteModule?.cmd(1, intArrayOf(1), null, null)  // Power on
+            remoteModule?.cmd(101, intArrayOf(1), null, null) // Enable tuner
+            log("Sent direct power commands")
+        } catch (e: Exception) {
+            log("Direct power failed: ${e.message}")
+        }
+    }
+
 
 
     // --- Audio Focus ---
@@ -365,11 +397,16 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
             handler.postDelayed({
                 // Now claim ownership
                 setSource(APP_ID_RADIO)
-                claimRadioAudioSession()
-                registerRadioTransport()
                 
-                // Keep Alive
-                startKeepAliveService()
+                // ===== CRITICAL: POWER ON THE TUNER FIRST =====
+                powerOnRadioTuner()
+                
+                handler.postDelayed({
+                    claimRadioAudioSession()
+                    registerRadioTransport()
+                    
+                    // Keep Alive
+                    startKeepAliveService()
                 
                 // Basic setup
                 setRegion(RadioRegion.USA)
@@ -396,7 +433,9 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
                     }, 300)
                 }, 500)
                 
-            }, 200) // Delay after kill
+            }, 300) // Wait after power on
+            
+        }, 200) // Delay after kill
             
         }, 100) // Small initial delay
     }
@@ -479,9 +518,9 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     fun setSource(appId: Int) {
         if (remoteMain != null) {
              try {
-                 log("Sending source switch to appId=$appId (C_SOURCE)")
-                 // Use C_SOURCE (2) to set audio source
-                 remoteMain?.cmd(C_SOURCE, intArrayOf(appId), null, null)
+                 log("Sending source switch to appId=$appId")
+                 // Command 0 on MODULE_MAIN for source switching
+                 remoteMain?.cmd(0, intArrayOf(appId), null, null)
              } catch(e: Exception) {
                  Log.e(TAG, "Source switch failed", e)
                  debugLog?.invoke("Source switch error: ${e.message}")
@@ -524,8 +563,7 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     override fun tuneTo(freq: Int) {
         log("tuneTo($freq)")
-        // Direct tune matches what you already had
-        // CMD C_13 params=0, <freq>, 0
+        // C_FREQ: mode=DIRECT(0), freq, extra=0
         sendCmdC(C_FREQ, 0, freq, 0)
         handler.postDelayed({ 
             claimRadioAudioSession()
@@ -534,8 +572,9 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     override fun tuneStepUp() {
-        log("tuneStepUp -> C_FREQ_UP")
-        sendCmdC(C_FREQ_UP)
+        log("tuneStepUp -> C_FREQ STEP +1")
+        // C_FREQ: mode=STEP(0), step=+1, extra=0
+        sendCmdC(C_FREQ, 0, 1, 0)
         handler.postDelayed({ 
             claimRadioAudioSession()
             sendRadioData(true)
@@ -543,8 +582,9 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     override fun tuneStepDown() {
-        log("tuneStepDown -> C_FREQ_DOWN")
-        sendCmdC(C_FREQ_DOWN)
+        log("tuneStepDown -> C_FREQ STEP -1")
+        // C_FREQ: mode=STEP(0), step=-1, extra=0
+        sendCmdC(C_FREQ, 0, -1, 0)
         handler.postDelayed({ 
             claimRadioAudioSession()
             sendRadioData(true)
@@ -552,14 +592,16 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     override fun seekUp() {
-        log("seekUp -> C_SEEK_UP")
-        sendCmdC(C_SEEK_UP)
+        log("seekUp -> U_SEARCH_STATE FORWARD")
+        // U_SEARCH_STATE: SEARCH_FORE (2)
+        sendCmdU(U_SEARCH_STATE, SEARCH_FORE)
         handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun seekDown() {
-        log("seekDown -> C_SEEK_DOWN")
-        sendCmdC(C_SEEK_DOWN)
+        log("seekDown -> U_SEARCH_STATE BACKWARD")
+        // U_SEARCH_STATE: SEARCH_BACK (3)
+        sendCmdU(U_SEARCH_STATE, SEARCH_BACK)
         handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
