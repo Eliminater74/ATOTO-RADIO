@@ -118,14 +118,23 @@ class MainActivity : AppCompatActivity() {
         // Start Sniffer for debugging
         registerSniffer()
         
-        // Start the Backend (Connects to service, initializes radio)
+        // Backend started in onStart() now
+    }
+
+    override fun onStart() {
+        super.onStart()
         backend.start()
     }
 
+    override fun onStop() {
+        super.onStop()
+        backend.stop()
+    }
+
     override fun onDestroy() {
-        super.onDestroy()
         backend.stop()
         unregisterReceiver(snifferReceiver)
+        super.onDestroy()
     }
 
     private fun updateStatus(text: String) {

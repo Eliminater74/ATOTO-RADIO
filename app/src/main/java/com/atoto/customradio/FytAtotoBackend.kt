@@ -270,6 +270,15 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     override fun stop() {
         log("Stopping Backend...")
+        
+        // Best-effort: release tuner/session before unbinding
+        try {
+            // Some FYT stacks respond to these broadcasts even if they are no-ops on others
+            context.sendBroadcast(Intent("com.syu.radio.stop"))
+            context.sendBroadcast(Intent("com.syu.radio.release"))
+            context.sendBroadcast(Intent("com.syu.radio.exit"))
+        } catch (_: Exception) {}
+
         // Unregister callbacks
         if (remoteModule != null) {
             for (i in 0..100) {
@@ -290,7 +299,7 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         try {
             context.unbindService(connection)
         } catch (e: Exception) {
-            Log.e(TAG, "Unbind failed", e)
+            log("Unbind failed: ${e.message}")
         }
         
         remoteToolkit = null
@@ -423,13 +432,12 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     private fun sendCmdU(uKey: Int, vararg params: Int) {
         if (remoteModule == null) {
-            log("sendCmdU($uKey, ${params.joinToString()}) -> remoteModule is null")
             return
         }
         try {
             val ints = if (params.isNotEmpty()) params else null
-            log("CMD U_$uKey params=${params.joinToString()}")
             remoteModule?.cmd(uKey, ints, null, null)
+            log("Sent CMD U_$uKey params=${params.joinToString()}")
         } catch (e: Exception) {
             debugLog?.invoke("U_$uKey error: ${e.message}")
         }
@@ -439,7 +447,9 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     override fun tuneTo(freq: Int) {
         log("tuneTo($freq)")
-        sendCmdC(C_FREQ, FREQ_DIRECT, freq, 0)
+        // Direct tune matches what you already had
+        // CMD C_13 params=0, <freq>, 0
+        sendCmdC(C_FREQ, 0, freq, 0)
         handler.postDelayed({ 
             claimRadioAudioSession()
             sendRadioData(true)
@@ -448,7 +458,8 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     override fun tuneStepUp() {
         log("tuneStepUp -> C_FREQ STEP +1")
-        sendCmdC(C_FREQ, FREQ_BY_STEP, 1, 0)
+        // Your unit: CMD C_13 params=0, 1, 0
+        sendCmdC(C_FREQ, 0, 1, 0)
         handler.postDelayed({ 
             claimRadioAudioSession()
             sendRadioData(true)
@@ -457,7 +468,8 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     override fun tuneStepDown() {
         log("tuneStepDown -> C_FREQ STEP -1")
-        sendCmdC(C_FREQ, FREQ_BY_STEP, -1, 0)
+        // Your unit: CMD C_13 params=0, -1, 0
+        sendCmdC(C_FREQ, 0, -1, 0)
         handler.postDelayed({ 
             claimRadioAudioSession()
             sendRadioData(true)
@@ -465,14 +477,14 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     override fun seekUp() {
-        log("seekUp -> U_SEARCH_STATE FORE")
-        sendCmdU(U_SEARCH_STATE, SEARCH_FORE)
+        // Your unit: CMD U_22 params=2
+        sendCmdU(22, 2)
         handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun seekDown() {
-        log("seekDown -> U_SEARCH_STATE BACK")
-        sendCmdU(U_SEARCH_STATE, SEARCH_BACK)
+        // Your unit: CMD U_22 params=3
+        sendCmdU(22, 3)
         handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
