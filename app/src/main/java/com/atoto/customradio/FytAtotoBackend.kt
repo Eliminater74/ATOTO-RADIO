@@ -52,10 +52,12 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         // --- C_* Command Codes (App -> MCU) ---
         const val C_NEXT_CHANNEL      = 0
         const val C_PREV_CHANNEL      = 1
+        const val C_SOURCE            = 2
         const val C_FREQ_UP           = 3
         const val C_FREQ_DOWN         = 4
         const val C_SEEK_UP           = 5
         const val C_SEEK_DOWN         = 6
+        const val C_MUTE              = 12
         const val C_SELECT_CHANNEL    = 7
         const val C_SAVE_CHANNEL      = 8
         const val C_SCAN              = 9
@@ -208,6 +210,29 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         }
     }
 
+    private fun killExistingRadioSessions() {
+        log("KILLING existing radio sessions...")
+        
+        val killActions = listOf(
+            "com.syu.radio.exit",      // Stock radio exit
+            "com.syu.radio.stop",      // Stop playback
+            "com.syu.radio.release",   // Release resources
+            "com.syu.radio.detach",    // Detach from MCU
+            "android.fyt.action.HIDE"  // Hide stock UI
+        )
+        
+        killActions.forEach { action ->
+            try {
+                val intent = Intent(action)
+                context.sendBroadcast(intent)
+                log("Sent kill signal: $action")
+                Thread.sleep(50) // Small delay between kills
+            } catch (e: Exception) {
+                log("Failed to send $action: ${e.message}")
+            }
+        }
+    }
+
 
 
     // --- Audio Focus ---
@@ -269,16 +294,30 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     override fun stop() {
-        log("Stopping Backend...")
+        log("Stopping Backend (RELEASING audio properly)...")
         
-        // Best-effort: release tuner/session before unbinding
+        // [CRITICAL] Tell MCU we're releasing audio BEFORE unbinding
         try {
-            // Some FYT stacks respond to these broadcasts even if they are no-ops on others
-            context.sendBroadcast(Intent("com.syu.radio.stop"))
-            context.sendBroadcast(Intent("com.syu.radio.release"))
-            context.sendBroadcast(Intent("com.syu.radio.exit"))
-        } catch (_: Exception) {}
+            val releaseIntent = Intent("com.syu.radio.release")
+            releaseIntent.setPackage("com.syu.ms")
+            context.sendBroadcast(releaseIntent)
 
+            // Mute first (C_MUTE = 12, mode=1 for mute)
+            try {
+                sendRadioData(true) // try to send one last data update
+                sendCmdC(C_MUTE, 1) // C_MUTE params=1
+            } catch(_: Exception) {}
+            
+            // Direct IPC release
+            remoteModule?.cmd(100, intArrayOf(0), null, null)
+            log("Audio session released")
+        } catch (e: Exception) {
+            log("Release failed: ${e.message}")
+        }
+        
+        // Small delay to let release propagate
+        Thread.sleep(100)
+        
         // Unregister callbacks
         if (remoteModule != null) {
             for (i in 0..100) {
@@ -305,43 +344,55 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         remoteToolkit = null
         remoteModule = null
         remoteMain = null
+        
+        log("Backend stopped cleanly")
     }
 
     // --- Core Logic ---
     private fun initializeRadio() {
-        log("Initializing Radio module with delayed sequence...")
+        log("Initializing Radio module with AGGRESSIVE takeover...")
         
-        // Initial Startup Delay to let service stabilize
         handler.postDelayed({
-            setSource(APP_ID_RADIO)
+            // [CRITICAL] Kill any existing radio session FIRST
+            killExistingRadioSessions()
             
-            // [1] Keep Alive Strategy (Spoofing)
-            startKeepAliveService()
-            
-            // [2] Audio Focus & Transport
-            claimRadioAudioSession() 
-            registerRadioTransport() 
-            
-            // Handshake/Init
-            setRegion(RadioRegion.USA)
-            setBand(RadioBand.FM1)
-            setStereoMode(StereoMode.AUTO)
-            setLocalDx(false)
-            
-            // Required Broadcasts
-            try {
-                context.sendBroadcast(Intent("com.syu.radio.Launch"))
-            } catch(e: Exception) { log("Launch broadcast failed") }
-
-            // Second Stage: Tune and Re-Claim
             handler.postDelayed({
-                tuneTo(10470) // Force initial tune to known good freq (104.7)
+                // Now claim ownership
+                setSource(APP_ID_RADIO)
                 claimRadioAudioSession()
-                sendRadioData(true) // Broadcast status
-                stopSeek() 
-            }, 500)
+                registerRadioTransport()
+                
+                // Keep Alive
+                startKeepAliveService()
+                
+                // Basic setup
+                setRegion(RadioRegion.USA)
+                setBand(RadioBand.FM1)
+                setStereoMode(StereoMode.AUTO)
+                setLocalDx(false)
+                
+                // Launch broadcast
+                try {
+                    context.sendBroadcast(Intent("com.syu.radio.Launch"))
+                } catch(e: Exception) { log("Launch broadcast failed") }
+                
+                // Force tune and reclaim
+                handler.postDelayed({
+                    tuneTo(10470) // 104.7 MHz
+                    claimRadioAudioSession() // Reclaim after tune
+                    sendRadioData(true)
+                    stopSeek()
+                    
+                    // CRITICAL: One more claim after everything settles
+                    handler.postDelayed({
+                        claimRadioAudioSession()
+                        log("Final audio session claim complete")
+                    }, 300)
+                }, 500)
+                
+            }, 200) // Delay after kill
             
-        }, 300)
+        }, 100) // Small initial delay
     }
 
     private fun registerRadioTransport() {
@@ -367,13 +418,32 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     private fun claimRadioAudioSession() {
+        log("Claiming audio session (AGGRESSIVE)...")
+        
+        val claimActions = listOf(
+            "request.radio.switch_st",  // Your existing one
+            "com.syu.radio.audio.claim", // Alternative claim
+            "com.fyt.radio.claim",       // FYT variant
+            "request.radio.audio"        // Generic request
+        )
+        
+        claimActions.forEach { action ->
+            try {
+                val intent = Intent(action)
+                intent.setPackage("com.syu.ms")
+                context.sendBroadcast(intent)
+                log("Audio claim sent: $action")
+            } catch (e: Exception) {
+                log("Claim failed for $action: ${e.message}")
+            }
+        }
+        
+        // Also try via IPC directly
         try {
-            val intent = Intent("request.radio.switch_st")
-            intent.setPackage("com.syu.ms")
-            context.sendBroadcast(intent)
-            log("Audio Session Claimed (request.radio.switch_st)")
+            remoteModule?.cmd(100, intArrayOf(1), null, null) // Direct audio claim
+            log("Direct IPC audio claim sent")
         } catch (e: Exception) {
-            log("Failed to claim radio session: ${e.message}")
+            log("Direct claim failed: ${e.message}")
         }
     }
     
@@ -403,8 +473,9 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     fun setSource(appId: Int) {
         if (remoteMain != null) {
              try {
-                 log("Sending source switch to appId=$appId")
-                 remoteMain?.cmd(0, intArrayOf(appId), null, null)
+                 log("Sending source switch to appId=$appId (C_SOURCE)")
+                 // Use C_SOURCE (2) to set audio source
+                 remoteMain?.cmd(C_SOURCE, intArrayOf(appId), null, null)
              } catch(e: Exception) {
                  Log.e(TAG, "Source switch failed", e)
                  debugLog?.invoke("Source switch error: ${e.message}")
@@ -457,9 +528,8 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     override fun tuneStepUp() {
-        log("tuneStepUp -> C_FREQ STEP +1")
-        // Your unit: CMD C_13 params=0, 1, 0
-        sendCmdC(C_FREQ, 0, 1, 0)
+        log("tuneStepUp -> C_FREQ_UP")
+        sendCmdC(C_FREQ_UP)
         handler.postDelayed({ 
             claimRadioAudioSession()
             sendRadioData(true)
@@ -467,9 +537,8 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     override fun tuneStepDown() {
-        log("tuneStepDown -> C_FREQ STEP -1")
-        // Your unit: CMD C_13 params=0, -1, 0
-        sendCmdC(C_FREQ, 0, -1, 0)
+        log("tuneStepDown -> C_FREQ_DOWN")
+        sendCmdC(C_FREQ_DOWN)
         handler.postDelayed({ 
             claimRadioAudioSession()
             sendRadioData(true)
@@ -477,14 +546,14 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     }
 
     override fun seekUp() {
-        // Your unit: CMD U_22 params=2
-        sendCmdU(22, 2)
+        log("seekUp -> C_SEEK_UP")
+        sendCmdC(C_SEEK_UP)
         handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun seekDown() {
-        // Your unit: CMD U_22 params=3
-        sendCmdU(22, 3)
+        log("seekDown -> C_SEEK_DOWN")
+        sendCmdC(C_SEEK_DOWN)
         handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
