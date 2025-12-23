@@ -179,23 +179,20 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
 
     private fun startKeepAliveService() {
+        // "Keep Alive" using Service start is invalid/fake on this unit. 
+        // We rely on 'takeover' and 'data' broadcasts instead.
+        log("Keep-Alive: Service start removed (using Broadcasts only)")
+    }
+
+    private fun sendTakeover(enable: Boolean) {
         try {
-            val intent = Intent()
-            intent.component = ComponentName("com.syu.radio", "com.navimods.radio.RadioService") // Try NavRadio+ package first if installed? No, spoof stock.
-            // Actually, NavRadio+ keeps specific service alive. Let's try to start the stock one if we can, or just broadcast Logger.
-            // NavRadio+ code: intent.setAction("com.syu.radio.Logger"); intent.setPackage("com.syu.radio");
-            
-            val intentLogger = Intent("com.syu.radio.Logger")
-            intentLogger.setPackage("com.syu.radio")
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intentLogger)
-            } else {
-                context.startService(intentLogger)
-            }
-            log("Started Keep-Alive Service (com.syu.radio.Logger)")
+            val i = Intent("com.syu.radio.takeover")
+            i.setPackage("com.syu.radio")
+            i.putExtra("st", enable)
+            context.sendBroadcast(i)
+            log("Sent Takeover (com.syu.radio.takeover, st=$enable)")
         } catch (e: Exception) {
-            log("Failed to start Keep-Alive Service: ${e.message}")
+            log("Failed to send takeover: ${e.message}")
         }
     }
 
@@ -281,6 +278,11 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     override fun start() {
         log("Starting Backend (binding to com.syu.ms.toolkit)...")
+        
+        // Takeover Radio
+        sendTakeover(true)
+        sendRadioData(true)
+
         try {
             val intent = Intent("com.syu.ms.toolkit")
             intent.setPackage("com.syu.ms")
@@ -296,6 +298,10 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     override fun stop() {
         log("Stopping Backend (RELEASING audio properly)...")
         
+        // Give radio back to system
+        sendRadioData(false)
+        sendTakeover(false)
+
         // [CRITICAL] Tell MCU we're releasing audio BEFORE unbinding
         try {
             val releaseIntent = Intent("com.syu.radio.release")
