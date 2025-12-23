@@ -440,21 +440,28 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     override fun tuneTo(freq: Int) {
         log("tuneTo($freq)")
         sendCmdC(C_FREQ, FREQ_DIRECT, freq, 0)
-        handler.postDelayed({ claimRadioAudioSession() }, 200)
+        handler.postDelayed({ 
+            claimRadioAudioSession()
+            sendRadioData(true)
+        }, 200)
     }
 
     override fun tuneStepUp() {
         log("tuneStepUp -> C_FREQ STEP +1")
-        // C_FREQ (13), mode=STEP(0), step=+1, unused=0
         sendCmdC(C_FREQ, FREQ_BY_STEP, 1, 0)
-        handler.postDelayed({ claimRadioAudioSession() }, 200)
+        handler.postDelayed({ 
+            claimRadioAudioSession()
+            sendRadioData(true)
+        }, 200)
     }
 
     override fun tuneStepDown() {
         log("tuneStepDown -> C_FREQ STEP -1")
-        // C_FREQ (13), mode=STEP(0), step=-1, unused=0
         sendCmdC(C_FREQ, FREQ_BY_STEP, -1, 0)
-        handler.postDelayed({ claimRadioAudioSession() }, 200)
+        handler.postDelayed({ 
+            claimRadioAudioSession()
+            sendRadioData(true)
+        }, 200)
     }
 
     override fun seekUp() {
@@ -472,6 +479,10 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
     override fun stopSeek() {
         log("stopSeek -> U_SEARCH_STATE STOP")
         sendCmdU(U_SEARCH_STATE, SEARCH_STATE_NONE)
+        handler.postDelayed({ 
+            claimRadioAudioSession()
+            sendRadioData(true)
+        }, 200)
     }
 
     override fun startScan() {
