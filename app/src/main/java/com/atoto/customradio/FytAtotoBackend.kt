@@ -4,685 +4,265 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
-import android.os.Build
-import android.os.IBinder
-import android.util.Log
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import com.syu.ipc.IModuleCallback
 import com.syu.ipc.IRemoteModule
 import com.syu.ipc.IRemoteToolkit
 
 class FytAtotoBackend(private val context: Context) : RadioBackend {
 
-    // --- Callbacks to UI ---
+    companion object {
+        const val TAG = "FytAtotoBackend"
+
+        // === IPC Constants ===
+        const val MODULE_RADIO      = 1
+        const val MODULE_MAIN       = 0
+
+        // === MCU Command/Update Codes ===
+        const val G_FREQ            = 13   // Frequency update (ints[0])
+        const val G_BAND            = 11   // Band update (ints[0])
+        const val G_AREA            = 12   // Region update (ints[0])
+
+        const val C_FREQ            = 13   // Set Frequency
+        const val U_SEARCH_STATE    = 22   // Seek/Search command (Update channel)
+
+        const val SEARCH_STATE_NONE = 0
+        const val SEARCH_FORE       = 2 // Seek Up
+        const val SEARCH_BACK       = 3 // Seek Down
+        
+        const val C_FREQ_DIRECT     = 0 // Parameter for direct tune
+        const val C_FREQ_BY_STEP    = 0 // Parameter for step tune
+        
+        // Command 11 = Band
+        const val C_BAND            = 11 
+
+        // Area Codes
+        const val AREA_USA          = 0
+        const val AREA_EUROPE       = 1
+        const val AREA_CHINA        = 2
+        const val AREA_JAPAN        = 3
+
+        // Apps
+        const val APP_ID_RADIO      = 1
+    }
+
+    // --- System & IPC Properties ---
+    private val handler = Handler(Looper.getMainLooper())
+    // AudioManager REMOVED - We do not touch audio focus in Controller Mode.
+    
+    // Remote Toolkit Service
+    private var remoteToolkit: IRemoteToolkit? = null
+    private var remoteModule: IRemoteModule? = null
+    
+    // Callbacks
     override var onFrequencyChanged: ((Int) -> Unit)? = null
     override var onBandChanged: ((RadioBand) -> Unit)? = null
     override var onRegionChanged: ((RadioRegion) -> Unit)? = null
+    override var onStereoModeChanged: ((StereoMode) -> Unit)? = null
     override var onRdsTextChanged: ((String) -> Unit)? = null
     override var onStationNameChanged: ((String) -> Unit)? = null
     override var onSearchStateChanged: ((SearchState) -> Unit)? = null
-
-    // --- Debug log callback (for MainActivity.tv_log) ---
-    var debugLog: ((String) -> Unit)? = null
+    override var onConnectionStateChange: ((Boolean) -> Unit)? = null
     
-    // Connection State Callback (added for UI feedback)
-    var onConnectionStateChange: ((Boolean) -> Unit)? = null
-
+    private var debugLog: ((String) -> Unit)? = null
+    override fun setDebugLog(logger: (String) -> Unit) {
+        debugLog = logger
+    }
+    
+    // Helper to log to both Logcat and internal debugger
     private fun log(msg: String) {
         Log.d(TAG, msg)
         debugLog?.invoke(msg)
     }
 
-    companion object {
-        const val TAG = "FytAtotoBackend"
-
-        const val MODULE_RADIO = 1        // FinalRadio.MODULE_RADIO_BY_MCU
-        const val MODULE_MAIN  = 0
-        const val APP_ID_RADIO = 1        // Standard Radio
-        
-        // --- G_* Get/Notify Codes (From MCU) ---
-        const val G_BAND = 0
-        const val G_FREQ = 1
-        const val G_AREA = 2
-        
-        // --- C_* Command Codes (App -> MCU) ---
-        const val C_NEXT_CHANNEL      = 0
-        const val C_RADIO_POWER       = 1  // Power on/off radio tuner
-        // const val C_PREV_CHANNEL      = 1 // Conflict
-        const val C_SOURCE            = 2
-        const val C_FREQ_UP           = 3
-        const val C_FREQ_DOWN         = 4
-        const val C_SEEK_UP           = 5
-        const val C_SEEK_DOWN         = 6
-        // const val C_MUTE              = 12 // Conflict with C_AREA
-        const val C_SELECT_CHANNEL    = 7
-        const val C_SAVE_CHANNEL      = 8
-        const val C_SCAN              = 9
-        const val C_SAVE              = 10
-        const val C_BAND              = 11
-        const val C_AREA              = 12
-        const val C_FREQ              = 13
-        const val C_SENSITY           = 14
-        const val C_AUTO_SENSITY      = 15
-        const val C_RDS_ENABLE        = 16
-        const val C_STEREO            = 17
-        const val C_LOC               = 18
-        
-        // --- U_* Update Codes (App -> MCU) ---
-        const val U_SEARCH_STATE = 22
-        
-        // --- Constants ---
-        const val FREQ_BY_STEP  = 0
-        const val FREQ_DIRECT   = 1
-        
-        const val SEARCH_STATE_NONE = 0
-        const val SEARCH_FORE       = 2
-        const val SEARCH_BACK       = 3
-        
-        const val AREA_USA    = 0
-        const val AREA_LATIN  = 1
-        const val AREA_EUROPE = 2
-        const val AREA_CHINA  = 2
-        const val AREA_OIRT   = 3
-        const val AREA_JAPAN  = 4
-        
-        const val BAND_FM1 = 0 
-    }
-    
-    private var currentFreq: Int = 8790 // Default fallback
-    
-    // --- System & IPC Properties ---
-    private val handler = Handler(Looper.getMainLooper())
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private var audioFocusRequest: AudioFocusRequest? = null
-    
-    private var remoteToolkit: IRemoteToolkit? = null
-    private var remoteModule: IRemoteModule? = null
-    private var remoteMain: IRemoteModule? = null
-
-// ...(keep existing callbacks)...
-
     // --- MCU Callback Implementation ---
     private val moduleCallback = object : IModuleCallback.Stub() {
+        // Called when MCU data changes
         override fun update(updateCode: Int, ints: IntArray?, floats: FloatArray?, strs: Array<String>?) {
-            val intsStr = ints?.joinToString() ?: "null"
-            val logMsg = "MCU update: code=$updateCode ints=[$intsStr]"
-            log(logMsg)
-
             handler.post {
                 when (updateCode) {
-                    // Standard FYT codes
                     G_FREQ -> {
                         val freq = ints?.getOrNull(0) ?: return@post
-                        log("G_FREQ -> $freq")
+                        log("MCU update: Freq -> $freq")
                         onFrequencyChanged?.invoke(freq)
                     }
                     G_BAND -> {
                         val bandInt = ints?.getOrNull(0) ?: return@post
                         val bandEnum = mapBandIntToEnum(bandInt)
-                        log("G_BAND -> $bandInt ($bandEnum)")
+                        log("MCU update: Band -> $bandInt")
                         onBandChanged?.invoke(bandEnum)
                     }
                     G_AREA -> {
-                        val areaInt = ints?.getOrNull(0) ?: return@post
-                        val regionEnum = mapRegionIntToEnum(areaInt)
-                        log("G_AREA -> $areaInt ($regionEnum)")
-                        onRegionChanged?.invoke(regionEnum)
+                         // Optional region logic
                     }
-                    
-                    // ATOTO Multiplexed Code
-                    28 -> { 
-                        if (ints != null && ints.isNotEmpty()) {
-                            if (ints.size == 1) {
-                                log("MCU ACK (28) -> Cmd: ${ints[0]}")
-                            } else {
-                                val cmdId = ints[0]
-                                val val1 = ints.getOrNull(1)
-                                
-                                when (cmdId) {
-                                    C_FREQ -> { // 13
-                                        if (val1 != null) {
-                                            log("Parsed FREQ from code 28 -> $val1")
-                                            onFrequencyChanged?.invoke(val1)
-                                        }
-                                    }
-                                    C_BAND -> { // 11
-                                        if (val1 != null) {
-                                            val bandEnum = mapBandIntToEnum(val1)
-                                            log("Parsed BAND from code 28 -> $val1 ($bandEnum)")
-                                            onBandChanged?.invoke(bandEnum)
-                                        }
-                                    }
-                                    C_AREA -> { // 12
-                                        if (val1 != null) {
-                                            val regionEnum = mapRegionIntToEnum(val1)
-                                            log("Parsed AREA from code 28 -> $val1 ($regionEnum)")
-                                            onRegionChanged?.invoke(regionEnum)
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    else -> {
+                        // Sniffer logic (commented out)
+                        /* if (ints != null && ints.isNotEmpty()) log("MCU update: $updateCode [${ints.joinToString()}]") */
                     }
                 }
             }
         }
-    }
-
-    // --- Audio Focus & Service Connection (No changes) ---
-
-    // --- Audio Focus & Service Connection ---
-
-
-
-    private fun startKeepAliveService() {
-        // "Keep Alive" using Service start is invalid/fake on this unit. 
-        // We rely on 'takeover' and 'data' broadcasts instead.
-        log("Keep-Alive: Service start removed (using Broadcasts only)")
-    }
-
-    private fun sendTakeover(enable: Boolean) {
-        try {
-            val i = Intent("com.syu.radio.takeover")
-            i.setPackage("com.syu.radio")
-            i.putExtra("st", enable)
-            context.sendBroadcast(i)
-            log("Sent Takeover (com.syu.radio.takeover, st=$enable)")
-        } catch (e: Exception) {
-            log("Failed to send takeover: ${e.message}")
-        }
-    }
-
-    private fun sendRadioData(stereo: Boolean) {
-        try {
-            val intent = Intent("com.syu.radio.data")
-            intent.putExtra("st", stereo)
-            context.sendBroadcast(intent)
-            log("Sent Radio Data (com.syu.radio.data, st=$stereo)")
-        } catch (e: Exception) {
-            log("Failed to send radio data: ${e.message}")
-        }
-    }
-
-    private fun killExistingRadioSessions() {
-        log("KILLING existing radio sessions...")
-        
-        val killActions = listOf(
-            "com.syu.radio.exit",      // Stock radio exit
-            "com.syu.radio.stop",      // Stop playback
-            "com.syu.radio.release",   // Release resources
-            "com.syu.radio.detach",    // Detach from MCU
-            "android.fyt.action.HIDE"  // Hide stock UI
-        )
-        
-        killActions.forEach { action ->
-            try {
-                val intent = Intent(action)
-                context.sendBroadcast(intent)
-                log("Sent kill signal: $action")
-                Thread.sleep(50) // Small delay between kills
-            } catch (e: Exception) {
-                log("Failed to send $action: ${e.message}")
-            }
-        }
-    }
-
-    private fun powerOnRadioTuner() {
-        log("*** POWERING ON RADIO TUNER (Multiple Methods) ***")
-        
-        // Method 1: Direct power command
-        sendCmdC(C_RADIO_POWER, 1)  // C_RADIO_POWER ON
-        Thread.sleep(50)
-        
-        // Method 2: Init command (some units)
-        sendCmdC(20, 1) // C_RADIO_INIT
-        Thread.sleep(50)
-        
-        // Method 3: Via broadcast
-        try {
-            val intent = Intent("com.syu.radio.power")
-            intent.putExtra("enable", true)
-            context.sendBroadcast(intent)
-            log("Sent radio power broadcast")
-        } catch (e: Exception) {
-            log("Power broadcast failed: ${e.message}")
-        }
-        
-        // Method 4: Direct module command (alternative codes)
-        try {
-            remoteModule?.cmd(1, intArrayOf(1), null, null)  // Power on
-            remoteModule?.cmd(101, intArrayOf(1), null, null) // Enable tuner
-            log("Sent direct power commands")
-        } catch (e: Exception) {
-            log("Direct power failed: ${e.message}")
-        }
-    }
-
-
-
-    // --- Audio Focus ---
-    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
-        log("Audio Focus Change: $focusChange")
     }
 
     // --- Service Connection ---
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            log("Connected to Toolkit Service: $name")
+            log("Connected to Toolkit Service")
             try {
                 remoteToolkit = IRemoteToolkit.Stub.asInterface(service)
                 remoteModule = remoteToolkit?.getRemoteModule(MODULE_RADIO)
-                remoteMain = remoteToolkit?.getRemoteModule(MODULE_MAIN)
                 
-                log("Modules acquired: Radio=$remoteModule Main=$remoteMain")
+                log("Got RemoteModule: $remoteModule")
                 onConnectionStateChange?.invoke(true)
                 
-                // Register Callbacks
-                for (i in 0..100) {
-                    remoteModule?.register(moduleCallback, i, 1)
-                }
-                log("Callbacks registered 0..100")
-
-                // Initialize
-                requestRadioFocus()
-                initializeRadio()
+                // Register Callbacks to listen to stock radio state
+                remoteModule?.register(moduleCallback, G_FREQ, 1)
+                remoteModule?.register(moduleCallback, G_BAND, 1)
+                
+                // Pull initial state
+                remoteModule?.cmd(G_FREQ, null, null, null)
+                remoteModule?.cmd(G_BAND, null, null, null)
                 
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to get Modules", e)
-                debugLog?.invoke("Error: ${e.message}")
+                log("Service init failed: ${e.message}")
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
-            log("Service Disconnected: $name")
+            log("Service Disconnected")
             onConnectionStateChange?.invoke(false)
             remoteToolkit = null
             remoteModule = null
-            remoteMain = null
         }
     }
 
-    // --- RadioBackend implementation ---
+    // --- RadioBackend Implementation (Controller logic) ---
 
     override fun start() {
-        log("Starting Backend (binding to com.syu.ms.toolkit)...")
+        log("Starting Backend (Controller Mode - No Audio Claim)")
         
-        // Takeover Radio
-        sendTakeover(true)
-        sendRadioData(true)
-
+        // 1. Bind to FYT Service
         try {
             val intent = Intent("com.syu.ms.toolkit")
             intent.setPackage("com.syu.ms")
-            val bound = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
-            log("bindService result = $bound")
-            context.sendBroadcast(Intent("android.fyt.action.HIDE"))
+            context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+            log("Binding to com.syu.ms.toolkit...")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to bind", e)
-            debugLog?.invoke("Bind Failed: ${e.message}")
+            log("Bind failed: ${e.message}")
         }
+        
+        // 2. Ensuring the System Radio is "Awake"
+        // We poke the service but assume it owns the session
+        try {
+            context.sendBroadcast(Intent("com.navimods.radio.start.logger"))
+        } catch(e: Exception) {}
     }
 
     override fun stop() {
-        log("Stopping Backend (RELEASING audio properly)...")
+        log("Stopping Backend")
         
-        // Give radio back to system
-        sendRadioData(false)
-        sendTakeover(false)
-
-        // [CRITICAL] Tell MCU we're releasing audio BEFORE unbinding
+        // Unbind only. Do NOT stop audio.
         try {
-            val releaseIntent = Intent("com.syu.radio.release")
-            releaseIntent.setPackage("com.syu.ms")
-            context.sendBroadcast(releaseIntent)
-
-            // Mute first (C_MUTE was 12 but conflicted, skipping mute cmd for now)
-            try {
-                sendRadioData(true) // try to send one last data update
-                // sendCmdC(C_MUTE, 1) // Disabled due to conflict
-            } catch(_: Exception) {}
-            
-            // Direct IPC release
-            remoteModule?.cmd(100, intArrayOf(0), null, null)
-            log("Audio session released")
-        } catch (e: Exception) {
-            log("Release failed: ${e.message}")
-        }
-        
-        // Small delay to let release propagate
-        Thread.sleep(100)
-        
-        // Unregister callbacks
-        if (remoteModule != null) {
-            for (i in 0..100) {
-                try {
-                    remoteModule?.unregister(moduleCallback, i)
-                } catch (e: Exception) { }
-            }
-        }
-        
-        // Release Audio Focus
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.abandonAudioFocus(audioFocusChangeListener)
-        }
-        
-        try {
+            remoteModule?.unregister(moduleCallback, G_FREQ)
+            remoteModule?.unregister(moduleCallback, G_BAND)
             context.unbindService(connection)
-        } catch (e: Exception) {
-            log("Unbind failed: ${e.message}")
+        } catch (e: Exception) { 
+            log("Unbind error: ${e.message}")
         }
         
         remoteToolkit = null
         remoteModule = null
-        remoteMain = null
-        
-        log("Backend stopped cleanly")
     }
 
-    // --- Core Logic ---
-    private fun initializeRadio() {
-        log("=== EMERGENCY INIT SEQUENCE ===")
-        
-        handler.postDelayed({
-            // Step 1: Nuclear kill
-            killExistingRadioSessions()
-            
-            handler.postDelayed({
-                // Step 2: Request status BEFORE we do anything
-                log("Requesting current radio state from MCU...")
-                try {
-                    remoteModule?.cmd(G_FREQ, null, null, null)  // Query frequency
-                    remoteModule?.cmd(G_BAND, null, null, null)  // Query band
-                    remoteModule?.cmd(G_AREA, null, null, null)  // Query region
-                } catch (e: Exception) {
-                    log("Status query failed: ${e.message}")
-                }
-                
-                handler.postDelayed({
-                    // Step 3: Source + Power
-                    setSource(APP_ID_RADIO)
-                    Thread.sleep(100)
-                    
-                    // Try ALL possible power/init commands
-                    for (cmd in listOf(1, 19, 20, 21, 100, 101)) {
-                        try {
-                            remoteModule?.cmd(cmd, intArrayOf(1), null, null)
-                            log("Sent power cmd $cmd")
-                            Thread.sleep(30)
-                        } catch (e: Exception) {}
-                    }
-                    
-                    handler.postDelayed({
-                        // Step 4: Audio claims
-                        claimRadioAudioSession()
-                        registerRadioTransport()
-                        
-                        handler.postDelayed({
-                            // Step 5: Configuration
-                            sendCmdC(C_AREA, AREA_USA)
-                            Thread.sleep(50)
-                            sendCmdC(C_BAND, 0) // FM1
-                            Thread.sleep(50)
-                            sendCmdC(C_STEREO, 0) // Auto
-                            Thread.sleep(50)
-                            
-                            handler.postDelayed({
-                                // Step 6: FORCE a frequency (this might trigger init)
-                                log("=== FORCING INITIAL TUNE ===")
-                                sendCmdC(C_FREQ, FREQ_DIRECT, 10470, 0)
-                                
-                                handler.postDelayed({
-                                    // Step 7: Query state again
-                                    try {
-                                        remoteModule?.cmd(G_FREQ, null, null, null)
-                                        log("Queried final frequency state")
-                                    } catch (e: Exception) {}
-                                    
-                                    claimRadioAudioSession()
-                                    sendRadioData(true)
-                                    log("=== INIT COMPLETE ===")
-                                }, 500)
-                            }, 300)
-                        }, 300)
-                    }, 200)
-                }, 200)
-            }, 200)
-        }, 100)
-    }
-
-    private fun registerRadioTransport() {
-        // Required for FYT/ATOTO to "attach" the tuner to this app
-        // sending all common variants to cover different firmwares
-        val actions = listOf(
-            "com.syu.radio.attach",
-            "com.syu.radio.start",
-            "com.syu.radio.takeover", // Common on newer UIS7862
-            "com.syu.radio.init"      // Critical for claiming ownership
-        )
-        
-        actions.forEach { action ->
-            try {
-                val intent = Intent(action)
-                intent.setPackage("com.syu.ms") // Target the backend service
-                context.sendBroadcast(intent)
-                log("Sent Transport Handshake: $action")
-            } catch (e: Exception) {
-                log("Failed to send $action: ${e.message}")
-            }
-        }
-    }
-
-    private fun claimRadioAudioSession() {
-        log("Claiming audio session (AGGRESSIVE)...")
-        
-        val claimActions = listOf(
-            "request.radio.switch_st",  // Your existing one
-            "com.syu.radio.audio.claim", // Alternative claim
-            "com.fyt.radio.claim",       // FYT variant
-            "request.radio.audio"        // Generic request
-        )
-        
-        claimActions.forEach { action ->
-            try {
-                val intent = Intent(action)
-                intent.setPackage("com.syu.ms")
-                context.sendBroadcast(intent)
-                log("Audio claim sent: $action")
-            } catch (e: Exception) {
-                log("Claim failed for $action: ${e.message}")
-            }
-        }
-        
-        // Also try via IPC directly
-        try {
-            remoteModule?.cmd(100, intArrayOf(1), null, null) // Direct audio claim
-            log("Direct IPC audio claim sent")
-        } catch (e: Exception) {
-            log("Direct claim failed: ${e.message}")
-        }
-    }
-    
-    private fun requestRadioFocus() {
-        log("Requesting Audio Focus...")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build())
-                .setAcceptsDelayedFocusGain(true)
-                .setOnAudioFocusChangeListener(audioFocusChangeListener)
-                .build()
-            
-            audioManager.requestAudioFocus(audioFocusRequest!!)
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.requestAudioFocus(
-                audioFocusChangeListener,
-                AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN
-            )
-        }
-    }
-    
-    fun setSource(appId: Int) {
-        if (remoteMain != null) {
-             try {
-                 log("Sending source switch to appId=$appId")
-                 // Command 0 on MODULE_MAIN for source switching
-                 remoteMain?.cmd(0, intArrayOf(appId), null, null)
-             } catch(e: Exception) {
-                 Log.e(TAG, "Source switch failed", e)
-                 debugLog?.invoke("Source switch error: ${e.message}")
-             }
-        } else {
-             log("Main module not connected (source switch ignored)")
-        }
-    }
-
-    // --- Helpers ---
-    private fun sendCmdC(cKey: Int, vararg params: Int) {
-        if (remoteModule == null) {
-            log("sendCmdC($cKey, ${params.joinToString()}) -> remoteModule is null")
-            return
-        }
-        try {
-            val ints = if (params.isNotEmpty()) params else null
-            log("CMD C_$cKey params=${params.joinToString()}")
-            remoteModule?.cmd(cKey, ints, null, null)
-        } catch (e: Exception) {
-            Log.e(TAG, "Remote C_* Call Failed", e)
-            debugLog?.invoke("C_$cKey error: ${e.message}")
-        }
-    }
-
-    private fun sendCmdU(uKey: Int, vararg params: Int) {
-        if (remoteModule == null) {
-            return
-        }
-        try {
-            val ints = if (params.isNotEmpty()) params else null
-            remoteModule?.cmd(uKey, ints, null, null)
-            log("Sent CMD U_$uKey params=${params.joinToString()}")
-        } catch (e: Exception) {
-            debugLog?.invoke("U_$uKey error: ${e.message}")
-        }
-    }
-
-    // --- RadioBackend methods ---
-
-    override fun tuneTo(freq: Int) {
-        log("tuneTo($freq)")
-        // C_FREQ: mode=DIRECT(0), freq, extra=0
-        sendCmdC(C_FREQ, 0, freq, 0)
-        handler.postDelayed({ 
-            claimRadioAudioSession()
-            sendRadioData(true)
-        }, 200)
+    override fun tuneTo(frequency: Int) {
+        log("CTLR: TuneTo $frequency")
+        // Controller Mode: Trust system to handle the hardware
+        sendCmdC(C_FREQ, frequency)
     }
 
     override fun tuneStepUp() {
-        log("tuneStepUp -> C_FREQ STEP +1")
-        // C_FREQ: mode=STEP(0), step=+1, extra=0
-        sendCmdC(C_FREQ, 0, 1, 0)
-        handler.postDelayed({ 
-            claimRadioAudioSession()
-            sendRadioData(true)
-        }, 200)
+        log("CTLR: Tune Step Up")
+        sendCmdC(C_FREQ, 0, 1)
     }
 
     override fun tuneStepDown() {
-        log("tuneStepDown -> C_FREQ STEP -1")
-        // C_FREQ: mode=STEP(0), step=-1, extra=0
-        sendCmdC(C_FREQ, 0, -1, 0)
-        handler.postDelayed({ 
-            claimRadioAudioSession()
-            sendRadioData(true)
-        }, 200)
+        log("CTLR: Tune Step Down")
+        sendCmdC(C_FREQ, 0, -1)
     }
 
     override fun seekUp() {
-        log("seekUp -> U_SEARCH_STATE FORWARD")
-        // U_SEARCH_STATE: SEARCH_FORE (2)
+        log("CTLR: Seek Up")
         sendCmdU(U_SEARCH_STATE, SEARCH_FORE)
-        handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun seekDown() {
-        log("seekDown -> U_SEARCH_STATE BACKWARD")
-        // U_SEARCH_STATE: SEARCH_BACK (3)
+        log("CTLR: Seek Down")
         sendCmdU(U_SEARCH_STATE, SEARCH_BACK)
-        handler.postDelayed({ claimRadioAudioSession() }, 200)
     }
 
     override fun stopSeek() {
-        log("stopSeek -> U_SEARCH_STATE STOP")
+        log("CTLR: Stop Seek")
         sendCmdU(U_SEARCH_STATE, SEARCH_STATE_NONE)
-        handler.postDelayed({ 
-            claimRadioAudioSession()
-            sendRadioData(true)
-        }, 200)
-    }
-
-    override fun startScan() {
-        log("startScan()")
-        sendCmdC(C_SCAN)
-        handler.postDelayed({ claimRadioAudioSession() }, 200)
-    }
-
-    override fun stopScan() {
-        log("stopScan()")
-        stopSeek() 
     }
 
     override fun setBand(band: RadioBand) {
-        val id = mapBandEnumToInt(band)
-        log("setBand($band) -> id=$id")
-        sendCmdC(C_BAND, id)
+        val bandInt = mapBandEnumToInt(band)
+        log("CTLR: Set Band $bandInt")
+        sendCmdC(C_BAND, bandInt)
     }
 
     override fun setRegion(region: RadioRegion) {
-        val area = mapRegionEnumToInt(region)
-        log("setRegion($region) -> area=$area")
-        sendCmdC(C_AREA, area)
+        // System managed
     }
-
+    
     override fun selectPreset(index: Int) {
-        log("selectPreset($index)")
-        sendCmdC(C_SELECT_CHANNEL, index)
+        // Controller mode usually implies app-side preset logic that calls tuneTo
     }
-
+    
     override fun savePreset(index: Int) {
-        log("savePreset($index)")
-        sendCmdC(C_SAVE_CHANNEL, index)
+         // App local logic
     }
 
     override fun setStereoMode(mode: StereoMode) {
-        val valInt = when(mode) {
-            StereoMode.AUTO -> 0
-            StereoMode.MONO -> 1
-            StereoMode.STEREO -> 2
-        }
-        log("setStereoMode($mode) -> $valInt")
-        sendCmdC(C_STEREO, valInt)
+        // System managed
     }
 
-    override fun setLocalDx(isLocal: Boolean) {
-        val v = if (isLocal) 1 else 0
-        log("setLocalDx($isLocal) -> $v")
-        sendCmdC(C_LOC, v)
+    override fun setLocalDx(local: Boolean) {
+        // System managed
     }
     
-    // --- Mappers ---
-    private fun mapBandIntToEnum(band: Int): RadioBand =
-        when (band) {
+    override fun startScan() {
+         // Not impl
+    }
+    
+    override fun stopScan() {
+         // Not impl
+    }
+
+    // --- Helper Methods ---
+
+    private fun sendCmdC(cKey: Int, vararg params: Int) {
+        try {
+            remoteModule?.cmd(cKey, params, null, null)
+        } catch (e: Exception) {
+            log("Cmd failed: ${e.message}")
+        }
+    }
+    
+    private fun sendCmdU(uKey: Int, vararg params: Int) {
+        try {
+            remoteModule?.cmd(uKey, params, null, null)
+        } catch (e: Exception) {
+            log("Cmd failed: ${e.message}")
+        }
+    }
+
+    // --- Enums / Mappers ---
+    private fun mapBandIntToEnum(band: Int): RadioBand {
+        return when (band) {
             0 -> RadioBand.FM1
             1 -> RadioBand.FM2
             2 -> RadioBand.FM3
@@ -690,34 +270,32 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
             4 -> RadioBand.AM2
             else -> RadioBand.FM1
         }
+    }
 
-    private fun mapBandEnumToInt(band: RadioBand): Int =
-        when (band) {
+    private fun mapBandEnumToInt(band: RadioBand): Int {
+        return when (band) {
             RadioBand.FM1 -> 0
             RadioBand.FM2 -> 1
             RadioBand.FM3 -> 2
             RadioBand.AM1 -> 3
             RadioBand.AM2 -> 4
         }
+    }
 
-    private fun mapRegionIntToEnum(region: Int): RadioRegion =
-        when (region) {
-            AREA_USA    -> RadioRegion.USA
+    // Unused in this simplified version
+    private fun mapRegionIntToEnum(area: Int): RadioRegion {
+        return when (area) {
+            AREA_USA -> RadioRegion.USA
             AREA_EUROPE -> RadioRegion.EUROPE
-            AREA_LATIN  -> RadioRegion.LATIN
-            AREA_JAPAN  -> RadioRegion.JAPAN
-            AREA_OIRT   -> RadioRegion.OIRT
-            AREA_CHINA  -> RadioRegion.CHINA
-            else        -> RadioRegion.USA
+            else -> RadioRegion.USA
         }
-
-    private fun mapRegionEnumToInt(region: RadioRegion): Int =
-        when (region) {
-            RadioRegion.USA    -> AREA_USA
+    }
+    
+     private fun mapRegionEnumToInt(region: RadioRegion): Int {
+        return when (region) {
+            RadioRegion.USA -> AREA_USA
             RadioRegion.EUROPE -> AREA_EUROPE
-            RadioRegion.LATIN  -> AREA_LATIN
-            RadioRegion.JAPAN  -> AREA_JAPAN
-            RadioRegion.OIRT   -> AREA_OIRT
-            RadioRegion.CHINA  -> AREA_CHINA
+            else -> AREA_USA
         }
+    }
 }

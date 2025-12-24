@@ -51,7 +51,7 @@ class MainActivity : AppCompatActivity() {
                  }
              }
              // Wiring the new Debug Logger
-             fytBackend.debugLog = { msg ->
+             fytBackend.setDebugLog { msg ->
                  runOnUiThread { appendLog(msg) }
              }
         }
@@ -99,8 +99,8 @@ class MainActivity : AppCompatActivity() {
         // Other debug buttons might need specific backend extensions or be removed/stubbed 
         findViewById<Button>(R.id.btn_debug_src11).setOnClickListener { 
              if (backend is FytAtotoBackend) {
-                 (backend as FytAtotoBackend).setSource(11) // Mute/Aux
-                 updateStatus("Debug: Force App ID 11")
+                 // (backend as FytAtotoBackend).setSource(11) // Removed in Controller Mode
+                 updateStatus("Debug: Force App ID 11 (Function Disabled)")
              }
         }
         findViewById<Button>(R.id.btn_debug_hide).setOnClickListener { 

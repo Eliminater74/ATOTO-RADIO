@@ -52,4 +52,9 @@ interface RadioBackend {
     var onRdsTextChanged: ((String) -> Unit)?
     var onStationNameChanged: ((String) -> Unit)?
     var onSearchStateChanged: ((SearchState) -> Unit)?
+
+    // Debugging
+    fun setDebugLog(logger: (String) -> Unit)
+    var onStereoModeChanged: ((StereoMode) -> Unit)?
+    var onConnectionStateChange: ((Boolean) -> Unit)?
 }

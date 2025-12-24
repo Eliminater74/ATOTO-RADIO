@@ -51,4 +51,10 @@ class DummyBackend : RadioBackend {
     override var onRdsTextChanged: ((String) -> Unit)? = null
     override var onStationNameChanged: ((String) -> Unit)? = null
     override var onSearchStateChanged: ((SearchState) -> Unit)? = null
+    override var onStereoModeChanged: ((StereoMode) -> Unit)? = null
+    override var onConnectionStateChange: ((Boolean) -> Unit)? = null
+
+    override fun setDebugLog(logger: (String) -> Unit) { 
+        // No-op for dummy
+    }
 }
