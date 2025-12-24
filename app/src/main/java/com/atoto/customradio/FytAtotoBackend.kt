@@ -52,13 +52,13 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
         // --- C_* Command Codes (App -> MCU) ---
         const val C_NEXT_CHANNEL      = 0
         const val C_RADIO_POWER       = 1  // Power on/off radio tuner
-        const val C_PREV_CHANNEL      = 1
+        // const val C_PREV_CHANNEL      = 1 // Conflict
         const val C_SOURCE            = 2
         const val C_FREQ_UP           = 3
         const val C_FREQ_DOWN         = 4
         const val C_SEEK_UP           = 5
         const val C_SEEK_DOWN         = 6
-        const val C_MUTE              = 12
+        // const val C_MUTE              = 12 // Conflict with C_AREA
         const val C_SELECT_CHANNEL    = 7
         const val C_SAVE_CHANNEL      = 8
         const val C_SCAN              = 9
@@ -340,10 +340,10 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
             releaseIntent.setPackage("com.syu.ms")
             context.sendBroadcast(releaseIntent)
 
-            // Mute first (C_MUTE = 12, mode=1 for mute)
+            // Mute first (C_MUTE was 12 but conflicted, skipping mute cmd for now)
             try {
                 sendRadioData(true) // try to send one last data update
-                sendCmdC(C_MUTE, 1) // C_MUTE params=1
+                // sendCmdC(C_MUTE, 1) // Disabled due to conflict
             } catch(_: Exception) {}
             
             // Direct IPC release
@@ -388,56 +388,73 @@ class FytAtotoBackend(private val context: Context) : RadioBackend {
 
     // --- Core Logic ---
     private fun initializeRadio() {
-        log("Initializing Radio module with AGGRESSIVE takeover...")
+        log("=== EMERGENCY INIT SEQUENCE ===")
         
         handler.postDelayed({
-            // [CRITICAL] Kill any existing radio session FIRST
+            // Step 1: Nuclear kill
             killExistingRadioSessions()
             
             handler.postDelayed({
-                // Now claim ownership
-                setSource(APP_ID_RADIO)
-                
-                // ===== CRITICAL: POWER ON THE TUNER FIRST =====
-                powerOnRadioTuner()
-                
-                handler.postDelayed({
-                    claimRadioAudioSession()
-                    registerRadioTransport()
-                    
-                    // Keep Alive
-                    startKeepAliveService()
-                
-                // Basic setup
-                setRegion(RadioRegion.USA)
-                setBand(RadioBand.FM1)
-                setStereoMode(StereoMode.AUTO)
-                setLocalDx(false)
-                
-                // Launch broadcast
+                // Step 2: Request status BEFORE we do anything
+                log("Requesting current radio state from MCU...")
                 try {
-                    context.sendBroadcast(Intent("com.syu.radio.Launch"))
-                } catch(e: Exception) { log("Launch broadcast failed") }
+                    remoteModule?.cmd(G_FREQ, null, null, null)  // Query frequency
+                    remoteModule?.cmd(G_BAND, null, null, null)  // Query band
+                    remoteModule?.cmd(G_AREA, null, null, null)  // Query region
+                } catch (e: Exception) {
+                    log("Status query failed: ${e.message}")
+                }
                 
-                // Force tune and reclaim
                 handler.postDelayed({
-                    tuneTo(10470) // 104.7 MHz
-                    claimRadioAudioSession() // Reclaim after tune
-                    sendRadioData(true)
-                    stopSeek()
+                    // Step 3: Source + Power
+                    setSource(APP_ID_RADIO)
+                    Thread.sleep(100)
                     
-                    // CRITICAL: One more claim after everything settles
+                    // Try ALL possible power/init commands
+                    for (cmd in listOf(1, 19, 20, 21, 100, 101)) {
+                        try {
+                            remoteModule?.cmd(cmd, intArrayOf(1), null, null)
+                            log("Sent power cmd $cmd")
+                            Thread.sleep(30)
+                        } catch (e: Exception) {}
+                    }
+                    
                     handler.postDelayed({
+                        // Step 4: Audio claims
                         claimRadioAudioSession()
-                        log("Final audio session claim complete")
-                    }, 300)
-                }, 500)
-                
-            }, 300) // Wait after power on
-            
-        }, 200) // Delay after kill
-            
-        }, 100) // Small initial delay
+                        registerRadioTransport()
+                        
+                        handler.postDelayed({
+                            // Step 5: Configuration
+                            sendCmdC(C_AREA, AREA_USA)
+                            Thread.sleep(50)
+                            sendCmdC(C_BAND, 0) // FM1
+                            Thread.sleep(50)
+                            sendCmdC(C_STEREO, 0) // Auto
+                            Thread.sleep(50)
+                            
+                            handler.postDelayed({
+                                // Step 6: FORCE a frequency (this might trigger init)
+                                log("=== FORCING INITIAL TUNE ===")
+                                sendCmdC(C_FREQ, FREQ_DIRECT, 10470, 0)
+                                
+                                handler.postDelayed({
+                                    // Step 7: Query state again
+                                    try {
+                                        remoteModule?.cmd(G_FREQ, null, null, null)
+                                        log("Queried final frequency state")
+                                    } catch (e: Exception) {}
+                                    
+                                    claimRadioAudioSession()
+                                    sendRadioData(true)
+                                    log("=== INIT COMPLETE ===")
+                                }, 500)
+                            }, 300)
+                        }, 300)
+                    }, 200)
+                }, 200)
+            }, 200)
+        }, 100)
     }
 
     private fun registerRadioTransport() {
